@@ -381,9 +381,6 @@ def get_foreign_holdings() -> pd.DataFrame:
 
     return pd.DataFrame(columns=["股票代號", "外資持股比例(%)", "發行總張數"])
 
-# ==========================================
-# 月營收資料抓取與指標分析
-# ==========================================
 def fetch_month_revenue(year_roc: int, month: int) -> pd.DataFrame:
     cache_file = os.path.join(CACHE_DIR, f"rev_{year_roc}_{month:02d}.csv")
     if os.path.exists(cache_file):
@@ -473,19 +470,19 @@ def get_revenue_analysis() -> pd.DataFrame:
     return df_merged[["股票代號", "營收連3月月增", "最新營收月增率(%)", "營收爆發1.5倍"]]
 
 # ==========================================
-# 核心選股與報表產生
+# 擴充取歷史行情至 160 天 (足夠回測 30 天)
 # ==========================================
-def get_last_n_trading_days_data(n_market=121, n_inst=20):
+def get_last_n_trading_days_data(n_market=160, n_inst=60):
     valid_dfs = []
     valid_inst = []
     today = datetime.date.today()
     offset = 0
     
-    print(f"\n⏳ 準備檢查 {n_market} 個交易日的歷史快取...")
+    print(f"\n⏳ 準備檢查 {n_market} 個交易日的歷史快取 (支援回測與半年指標)...")
     
     while len(valid_dfs) < n_market:
-        if offset > 260:
-            raise RuntimeError("連續 260 天都抓不到足夠的交易日資料，請檢查網路或 API。")
+        if offset > 320:
+            raise RuntimeError("連續 320 天都抓不到足夠的交易日資料，請檢查網路或 API。")
         target_date = today - datetime.timedelta(days=offset)
         offset += 1
         if target_date.weekday() >= 5:
@@ -525,14 +522,14 @@ def color_pct(val):
 def main():
     print("啟動多策略選股程式，準備抓取價量、法人與大戶資料...\n")
 
-    days_data, inst_data = get_last_n_trading_days_data(n_market=121, n_inst=20)
+    days_data, inst_data = get_last_n_trading_days_data(n_market=160, n_inst=60)
 
     date_0, df_0 = days_data[0]
     date_1, df_1 = days_data[1]
     date_2, df_2 = days_data[2]
     date_120, _ = days_data[120]
 
-    print(f"\n✅ 行情獲取完畢！ 日期區間: [{date_120}] ~ [{date_0}]")
+    print(f"\n✅ 行情獲取完畢！ 基準日: [{date_0}]")
 
     df_tdcc = get_tdcc_data()
     df_holdings = get_foreign_holdings()
@@ -550,7 +547,7 @@ def main():
     df_merge = pd.merge(df_0_merge, df_1_merge, on="股票代號", how="inner")
     df_merge = pd.merge(df_merge, df_2_merge, on="股票代號", how="inner")
 
-    for i in range(3, 121):
+    for i in range(3, 160):
         _, df_i = days_data[i]
         if df_i.empty:
             continue
@@ -605,7 +602,7 @@ def main():
     df_merge['創5日高'] = (df_merge['收盤價_0'] > df_merge['5日最高收盤']).apply(lambda x: "是" if x else "否")
     df_merge['創20日高'] = (df_merge['收盤價_0'] > df_merge['20日最高收盤']).apply(lambda x: "是" if x else "否")
 
-    for idx in range(20):
+    for idx in range(60):
         i_df = inst_data[idx][1]
         if not i_df.empty:
             tmp = i_df.copy()
@@ -1174,13 +1171,12 @@ def main():
     cols17 = base_cols + ["120日最高收盤", "增量倍數"] + chip_cols
     html_tb17 = apply_color_formatting(res17[cols17]).to_html(index=False, classes="styled-table sortable-table", escape=False)
 
-    # 策略 18: 營收連3月月增 + 第一天出量 + 股價漲
+    # 策略 18
     def cond18_fn(k):
         rev_ok = df_merge['營收連3月月增']
         vol_first = (df_merge[f'成交量_{k}'] >= df_merge[f'成交量_{k+1}'] * 1.2) & (df_merge[f'成交量_{k+1}'] <= df_merge[f'成交量_{k+2}'])
         p_up = df_merge[f'收盤價_{k}'] > df_merge[f'收盤價_{k+1}']
         return rev_ok & vol_first & p_up
-
     res18_hits = eval_rolling_condition(cond18_fn)
     cond18 = (
         (df_merge['營收連3月月增'] == True) &
@@ -1196,12 +1192,11 @@ def main():
     cols18 = base_cols + ["最新營收月增率(%)", "增量倍數"] + chip_cols
     html_tb18 = apply_color_formatting(res18[cols18]).to_html(index=False, classes="styled-table sortable-table", escape=False)
 
-    # 策略 19: 最新營收暴增 1.5 倍以上 + 第一天出量
+    # 策略 19
     def cond19_fn(k):
         rev_1_5x = df_merge['營收爆發1.5倍']
         vol_first = (df_merge[f'成交量_{k}'] >= df_merge[f'成交量_{k+1}'] * 1.2) & (df_merge[f'成交量_{k+1}'] <= df_merge[f'成交量_{k+2}'])
         return rev_1_5x & vol_first
-
     res19_hits = eval_rolling_condition(cond19_fn)
     cond19 = (
         (df_merge['營收爆發1.5倍'] == True) &
@@ -1216,7 +1211,7 @@ def main():
     cols19 = base_cols + ["最新營收月增率(%)", "增量倍數"] + chip_cols
     html_tb19 = apply_color_formatting(res19[cols19]).to_html(index=False, classes="styled-table sortable-table", escape=False)
 
-    # 策略 20: 外資連三買且越買越多 + 第一天出量 + 股價上漲
+    # 策略 20
     def cond20_fn(k):
         f_more = (df_merge[f'外資_{k}'] > df_merge[f'外資_{k+1}']) & \
                  (df_merge[f'外資_{k+1}'] > df_merge[f'外資_{k+2}']) & \
@@ -1224,7 +1219,6 @@ def main():
         vol_up = df_merge[f'成交量_{k}'] >= df_merge[f'成交量_{k+1}'] * 1.2
         p_up = df_merge[f'收盤價_{k}'] > df_merge[f'收盤價_{k+1}']
         return f_more & vol_up & p_up
-
     res20_hits = eval_rolling_condition(cond20_fn)
     cond20 = (
         (df_merge['外資_0'] > df_merge['外資_1']) &
@@ -1247,6 +1241,80 @@ def main():
     })
     cols20 = base_cols + ["最新日外資(張)", "前1日外資(張)", "前2日外資(張)", "增量倍數"] + chip_cols
     html_tb20 = apply_color_formatting(res20[cols20]).to_html(index=False, classes="styled-table sortable-table", escape=False)
+
+    # ==========================
+    # 【新增】策略 21: 過去30天歷史各策略「隔天勝率回測統計」
+    # ==========================
+    print("🔬 正在執行過去 30 天各策略隔日勝率回測計算...")
+    
+    # 策略函數清單
+    strategy_eval_funcs = [
+        ("1.跳空不補", cond1_fn),
+        ("2.連續墊高", cond2_fn),
+        ("3.量增法人買", cond3_fn),
+        ("4.創20日新高", cond4_fn),
+        ("5.旱地拔蔥", cond5_fn),
+        ("6.創五日高", cond6_fn),
+        ("7.20日高不賣", cond7_fn),
+        ("8.連日墊高", cond8_fn),
+        ("9.多重濾網", cond9_fn),
+        ("10.上櫃強勢", cond10_fn),
+        ("11.上櫃紅K", cond11_fn),
+        ("13.逼近60日高", cond13_fn),
+        ("14.創20日高不賣", cond14_fn),
+        ("15.壓縮突破60日", cond15_fn),
+        ("16.最大量高點", cond16_fn),
+        ("17.創120日高", cond17_fn),
+        ("18.營收連三增啟動", cond18_fn),
+        ("19.營收暴增1.5倍", cond19_fn),
+        ("20.外資越買越多出量", cond20_fn),
+    ]
+
+    backtest_records = []
+    # 回測過去 30 天：以歷史 k = 1 到 30 天作為選股當日，其隔天為 k - 1
+    for st_name, fn in strategy_eval_funcs:
+        total_picks = 0
+        up_picks = 0
+        return_list = []
+
+        for k in range(1, 31):
+            try:
+                selected_mask = fn(k)
+                if selected_mask is None or not selected_mask.any():
+                    continue
+
+                # 隔天（k-1）相對當日（k）的漲跌幅
+                next_day_ret = ((df_merge.loc[selected_mask, f'收盤價_{k-1}'] - df_merge.loc[selected_mask, f'收盤價_{k}']) / df_merge.loc[selected_mask, f'收盤價_{k}']) * 100
+                next_day_ret = next_day_ret.dropna()
+
+                count_k = len(next_day_ret)
+                if count_k > 0:
+                    total_picks += count_k
+                    up_picks += (next_day_ret > 0).sum()
+                    return_list.extend(next_day_ret.tolist())
+            except Exception:
+                continue
+
+        win_rate = round((up_picks / total_picks * 100), 2) if total_picks > 0 else 0.0
+        avg_ret = round((sum(return_list) / len(return_list)), 2) if return_list else 0.0
+
+        backtest_records.append({
+            "選股策略名稱": st_name,
+            "隔天上漲率(%)": win_rate,
+            "隔日平均報酬(%)": avg_ret,
+            "總選中樣本數": total_picks,
+            "隔天上漲次數": up_picks,
+            "隔天下跌次數": total_picks - up_picks
+        })
+
+    df_strat21 = pd.DataFrame(backtest_records)
+    df_strat21 = df_strat21.sort_values(by=["隔天上漲率(%)", "隔日平均報酬(%)"], ascending=[False, False])
+    
+    # 格式化上色
+    df_strat21_show = df_strat21.copy()
+    df_strat21_show["隔天上漲率(%)"] = df_strat21_show["隔天上漲率(%)"].apply(lambda x: f"<b style='color:#dc2626;'>{x:.2f}%</b>" if x >= 50 else f"<span style='color:#16a34a;'>{x:.2f}%</span>")
+    df_strat21_show["隔日平均報酬(%)"] = df_strat21_show["隔日平均報酬(%)"].apply(color_pct)
+    html_tb21 = df_strat21_show.to_html(index=False, classes="styled-table sortable-table", escape=False)
 
     # 策略 12: 綜合排行 (前 50 名) - 納入策略 18、19、20
     st_lists = [
@@ -1601,6 +1669,7 @@ def main():
 
         <div class="tabs-wrapper" id="tabsHeader">
             <button class="tab-btn active" onclick="openStrategy(event, 'Strat12')">🌟 12. 綜合排行</button>
+            <button class="tab-btn" onclick="openStrategy(event, 'Strat21')">📊 21. 隔日勝率統計</button>
             <button class="tab-btn" onclick="openStrategy(event, 'Strat20')">🚀 20. 外資越買越多出量</button>
             <button class="tab-btn" onclick="openStrategy(event, 'Strat19')">⚡ 19. 營收暴增1.5倍</button>
             <button class="tab-btn" onclick="openStrategy(event, 'Strat18')">💎 18. 營收三連增啟動</button>
@@ -1631,6 +1700,14 @@ def main():
                     <div class="count-badge">✅ 前 50 名強勢標的</div>
                 </div>
                 <div class="table-container">{html_tb12}</div>
+            </div>
+
+            <div id="Strat21" class="tabcontent">
+                <div class="info-box">
+                    <p>🎯 <b>策略 21：30天歷史回測</b> 統計各策略在過去 30 個交易日內選出的個股，在「隔天收盤為紅盤」的歷史機率與平均漲跌幅度。</p>
+                    <div class="count-badge">📊 依上漲勝率排行</div>
+                </div>
+                <div class="table-container">{html_tb21}</div>
             </div>
 
             <div id="Strat20" class="tabcontent">
@@ -1832,7 +1909,6 @@ def main():
                 document.getElementById(strategyName).style.display = "block";
                 evt.currentTarget.classList.add("active");
                 
-                // 點擊後平滑滾動至容器中央
                 evt.currentTarget.scrollIntoView({{ behavior: 'smooth', inline: 'center', block: 'nearest' }});
             }}
 
@@ -1864,8 +1940,10 @@ def main():
                 const rows = Array.from(tbody.querySelectorAll('tr'));
 
                 rows.sort((rowA, rowB) => {{
-                    const favA = rowA.querySelector('.fav-star').classList.contains('active') ? 1 : 0;
-                    const favB = rowB.querySelector('.fav-star').classList.contains('active') ? 1 : 0;
+                    const starA = rowA.querySelector('.fav-star');
+                    const starB = rowB.querySelector('.fav-star');
+                    const favA = (starA && starA.classList.contains('active')) ? 1 : 0;
+                    const favB = (starB && starB.classList.contains('active')) ? 1 : 0;
 
                     if (favA !== favB) return favB - favA;
 
@@ -1898,7 +1976,7 @@ def main():
 
             function enableTableSorting() {{
                 document.querySelectorAll('.styled-table th').forEach(header => {{
-                    if (header.cellIndex === 0) return;
+                    if (header.cellIndex === 0 && header.innerText.includes("⭐")) return;
 
                     header.addEventListener('click', function() {{
                         const table = this.closest('table');
@@ -2247,7 +2325,7 @@ def main():
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(html_content)
 
-    print(f"\n✅ 策略 20 已新增，頂部選單已改為單列水平滑動！網頁已生成: {html_filename}")
+    print(f"\n✅ 策略 21（30天隔日勝率回測排行）已計算完成！網頁已生成: {html_filename}")
     if os.environ.get("GITHUB_ACTIONS") != "true":
         webbrowser.open(f"file:///{file_path}")
 

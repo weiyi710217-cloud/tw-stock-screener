@@ -410,8 +410,26 @@ def get_last_n_trading_days_data(n_market=121, n_inst=20):
             time.sleep(0.5)
     return valid_dfs, valid_inst
 
-def create_yahoo_link(stock_id):
-    return f"<a href='https://tw.stock.yahoo.com/quote/{stock_id}/technical-analysis' target='_blank' class='btn'>看K線</a>"
+# ==========================================
+# 格式化小工具：合併代號名稱＋超連結、漲跌上色
+# ==========================================
+def format_stock_cell(row):
+    code = row['股票代號']
+    name = row['股票名稱']
+    url = f"https://tw.stock.yahoo.com/quote/{code}/technical-analysis"
+    return f"<a href='{url}' target='_blank' class='stock-link'><div class='stock-name'>{name}</div><div class='stock-code'>{code}</div></a>"
+
+def color_pct(val):
+    try:
+        f = float(val)
+        if f > 0:
+            return f"<span class='tag-up'>+{f:.2f}%</span>"
+        elif f < 0:
+            return f"<span class='tag-down'>{f:.2f}%</span>"
+        else:
+            return f"<span class='tag-flat'>0.00%</span>"
+    except Exception:
+        return str(val)
 
 def main():
     print("啟動多策略選股程式，準備抓取價量、法人與大戶資料...\n")
@@ -465,6 +483,7 @@ def main():
 
     df_merge['5日最高收盤'] = df_merge[close_cols_5].max(axis=1)
     df_merge['20日最高收盤'] = df_merge[close_cols_20].max(axis=1)
+    
     df_merge['60日最高收盤'] = df_merge[close_cols_60].max(axis=1)
     df_merge['120日最高收盤'] = df_merge[close_cols_120].max(axis=1)
     
@@ -666,8 +685,12 @@ def main():
     df_merge['近10日漲幅(%)'] = df_merge.apply(calc_10d_total_return, axis=1)
     df_merge['創60日最大量'] = df_merge['成交量_0'] >= df_merge['60日最大量']
 
-    base_cols = ["⭐", "市場", "股票代號", "股票名稱", "近7日符合次數", "近5日紅盤", "近10日紅盤", "近10日漲幅(%)", f"{d1_s} 收盤", f"{d0_s} 收盤", "最新漲幅(%)", "前一日漲幅(%)", f"{d0_s} 量(張)"]
-    chip_cols = ["外資近七日(張)", "投信近七日(張)", "外資近一月(張)", "外資近月買超佔持股(%)", "千張大戶比例(%)", "看盤連結"]
+    # 合併名稱與代號成單一超連結欄位
+    df_merge['標的'] = df_merge.apply(format_stock_cell, axis=1)
+
+    # 輸出欄位模板
+    base_cols = ["⭐", "市場", "標的", "近7日符合次數", "近5日紅盤", "近10日紅盤", "近10日漲幅(%)", f"{d1_s} 收盤", f"{d0_s} 收盤", "最新漲幅(%)", "前一日漲幅(%)", f"{d0_s} 量(張)"]
+    chip_cols = ["外資近七日(張)", "投信近七日(張)", "外資近一月(張)", "外資近月買超佔持股(%)", "千張大戶比例(%)"]
 
     def eval_rolling_condition(condition_func):
         counts = pd.Series(0, index=df_merge.index)
@@ -678,6 +701,13 @@ def main():
             except Exception:
                 pass
         return counts.apply(lambda x: f"{x}次 / 7日")
+
+    def apply_color_formatting(df_in):
+        df_out = df_in.copy()
+        for col_name in ["最新漲幅(%)", "前一日漲幅(%)", "近10日漲幅(%)"]:
+            if col_name in df_out.columns:
+                df_out[col_name] = df_out[col_name].apply(color_pct)
+        return df_out
 
     # 策略 1: 跳空不回補
     def cond1_fn(k):
@@ -690,10 +720,9 @@ def main():
     res1['近7日符合次數'] = res1_hits[cond1]
     res1["增量倍數"] = (res1["成交量_0"] / res1["成交量_1"]).round(2)
     res1 = res1.sort_values(by=["跳空天數", "量增天數", "增量倍數"], ascending=[False, False, False])
-    res1["看盤連結"] = res1["股票代號"].apply(create_yahoo_link)
     res1 = res1.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
     cols1 = base_cols + ["跳空天數", "量增天數", "增量倍數"] + chip_cols
-    html_tb1 = res1[cols1].to_html(index=False, classes="styled-table sortable-table", escape=False)
+    html_tb1 = apply_color_formatting(res1[cols1]).to_html(index=False, classes="styled-table sortable-table", escape=False)
 
     # 策略 2: 連續收盤墊高
     def cond2_fn(k):
@@ -715,10 +744,9 @@ def main():
     res2['近7日符合次數'] = res2_hits[cond2]
     res2["增量倍數"] = (res2["成交量_0"] / res2["成交量_1"]).round(2)
     res2 = res2.sort_values(by=["墊高天數", "外資連買天數", "增量倍數"], ascending=[False, False, False])
-    res2["看盤連結"] = res2["股票代號"].apply(create_yahoo_link)
     res2 = res2.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
     cols2 = base_cols + ["墊高天數", "量增天數", "外資連買天數", "增量倍數"] + chip_cols
-    html_tb2 = res2[cols2].to_html(index=False, classes="styled-table sortable-table", escape=False)
+    html_tb2 = apply_color_formatting(res2[cols2]).to_html(index=False, classes="styled-table sortable-table", escape=False)
 
     # 策略 3: 量增+投信不賣+外資連買
     def cond3_fn(k):
@@ -739,10 +767,9 @@ def main():
     res3['近7日符合次數'] = res3_hits[cond3]
     res3["增量倍數"] = (res3["成交量_0"] / res3["成交量_1"]).round(2)
     res3 = res3.sort_values(by=["外資連買天數", "增量倍數"], ascending=[False, False])
-    res3["看盤連結"] = res3["股票代號"].apply(create_yahoo_link)
     res3 = res3.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)", "外資_0": "最新日外資(張)"})
     cols3 = base_cols + ["最新日外資(張)", "外資連買天數", "連漲天數", "增量倍數"] + chip_cols
-    html_tb3 = res3[cols3].to_html(index=False, classes="styled-table sortable-table", escape=False)
+    html_tb3 = apply_color_formatting(res3[cols3]).to_html(index=False, classes="styled-table sortable-table", escape=False)
 
     # 策略 4: 創 20 日高 + 投信七日不賣
     def cond4_fn(k):
@@ -764,10 +791,9 @@ def main():
     res4['近7日符合次數'] = res4_hits[cond4]
     res4["增量倍數"] = (res4["成交量_0"] / res4["成交量_1"]).round(2)
     res4 = res4.sort_values(by=["投信近七日(張)", "增量倍數"], ascending=[False, False])
-    res4["看盤連結"] = res4["股票代號"].apply(create_yahoo_link)
     res4 = res4.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)", "外資_0": "最新日外資(張)"})
     cols4 = base_cols + ["最新日外資(張)", "增量倍數"] + chip_cols
-    html_tb4 = res4[cols4].to_html(index=False, classes="styled-table sortable-table", escape=False)
+    html_tb4 = apply_color_formatting(res4[cols4]).to_html(index=False, classes="styled-table sortable-table", escape=False)
 
     # 策略 5: 旱地拔蔥
     def cond5_fn(k):
@@ -792,10 +818,9 @@ def main():
     res5["增量倍數"] = (res5["成交量_0"] / res5["成交量_1"]).round(2)
     res5['最新法人買超(張)'] = res5['外資_0'] + res5['投信_0']
     res5 = res5.sort_values(by=["最新法人買超(張)", "增量倍數"], ascending=[False, False])
-    res5["看盤連結"] = res5["股票代號"].apply(create_yahoo_link)
     res5 = res5.rename(columns={"收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)", "收盤價_1": f"{d1_s} 收盤"})
     cols5 = base_cols + ["最新法人買超(張)", "增量倍數"] + chip_cols
-    html_tb5 = res5[cols5].to_html(index=False, classes="styled-table sortable-table", escape=False)
+    html_tb5 = apply_color_formatting(res5[cols5]).to_html(index=False, classes="styled-table sortable-table", escape=False)
 
     # 策略 6: 創五日高+跳空不賣
     def cond6_fn(k):
@@ -817,10 +842,9 @@ def main():
     res6['近7日符合次數'] = res6_hits[cond6]
     res6["增量倍數"] = (res6["成交量_0"] / res6["成交量_1"]).round(2)
     res6 = res6.sort_values(by=["投信近三日(張)", "增量倍數"], ascending=[False, False])
-    res6["看盤連結"] = res6["股票代號"].apply(create_yahoo_link)
     res6 = res6.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
     cols6 = base_cols + ["增量倍數"] + chip_cols
-    html_tb6 = res6[cols6].to_html(index=False, classes="styled-table sortable-table", escape=False)
+    html_tb6 = apply_color_formatting(res6[cols6]).to_html(index=False, classes="styled-table sortable-table", escape=False)
 
     # 策略 7: 創 20 日高 + 連七不賣
     def cond7_fn(k):
@@ -847,10 +871,9 @@ def main():
     res7['近7日符合次數'] = res7_hits[cond7]
     res7["增量倍數"] = (res7["成交量_0"] / res7["成交量_1"]).round(2)
     res7 = res7.sort_values(by=["投信近七日(張)", "增量倍數"], ascending=[False, False])
-    res7["看盤連結"] = res7["股票代號"].apply(create_yahoo_link)
     res7 = res7.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
     cols7 = base_cols + ["增量倍數"] + chip_cols
-    html_tb7 = res7[cols7].to_html(index=False, classes="styled-table sortable-table", escape=False)
+    html_tb7 = apply_color_formatting(res7[cols7]).to_html(index=False, classes="styled-table sortable-table", escape=False)
 
     # 策略 8: 連兩日墊高 + 連七不賣
     def cond8_fn(k):
@@ -873,10 +896,9 @@ def main():
     res8['近7日符合次數'] = res8_hits[cond8]
     res8["增量倍數"] = (res8["成交量_0"] / res8["成交量_1"]).round(2)
     res8 = res8.sort_values(by=["投信近七日(張)", "增量倍數"], ascending=[False, False])
-    res8["看盤連結"] = res8["股票代號"].apply(create_yahoo_link)
     res8 = res8.rename(columns={"收盤價_2": f"{d2_s} 收盤", "收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
     cols8 = base_cols + ["增量倍數"] + chip_cols
-    html_tb8 = res8[cols8].to_html(index=False, classes="styled-table sortable-table", escape=False)
+    html_tb8 = apply_color_formatting(res8[cols8]).to_html(index=False, classes="styled-table sortable-table", escape=False)
 
     # 策略 9: 多重濾網 (連七不賣)
     def cond9_fn(k):
@@ -896,10 +918,9 @@ def main():
     res9 = df_merge[cond9].copy()
     res9['近7日符合次數'] = res9_hits[cond9]
     res9 = res9.sort_values(by=["最新漲幅(%)"], ascending=False)
-    res9["看盤連結"] = res9["股票代號"].apply(create_yahoo_link)
     res9 = res9.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
     cols9 = base_cols + ["創5日高", "創20日高"] + chip_cols
-    html_tb9 = res9[cols9].to_html(index=False, classes="styled-table sortable-table", escape=False)
+    html_tb9 = apply_color_formatting(res9[cols9]).to_html(index=False, classes="styled-table sortable-table", escape=False)
 
     # 策略 10: 上櫃強勢
     def cond10_fn(k):
@@ -910,10 +931,9 @@ def main():
     res10 = df_merge[cond10].copy()
     res10['近7日符合次數'] = res10_hits[cond10]
     res10 = res10.sort_values(by=["最新漲幅(%)"], ascending=False)
-    res10["看盤連結"] = res10["股票代號"].apply(create_yahoo_link)
     res10 = res10.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
     cols10 = base_cols + chip_cols
-    html_tb10 = res10[cols10].to_html(index=False, classes="styled-table sortable-table", escape=False)
+    html_tb10 = apply_color_formatting(res10[cols10]).to_html(index=False, classes="styled-table sortable-table", escape=False)
 
     # 策略 11: 上櫃實體紅K
     def cond11_fn(k):
@@ -928,10 +948,9 @@ def main():
     res11 = res11[res11["實體K漲幅(%)"].notna()]
     res11['近7日符合次數'] = res11_hits.loc[res11.index]
     res11 = res11.sort_values(by=["實體K漲幅(%)"], ascending=False)
-    res11["看盤連結"] = res11["股票代號"].apply(create_yahoo_link)
     res11 = res11.rename(columns={"開盤價_0": f"{d0_s} 開盤", "收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
     cols11 = base_cols + [f"{d0_s} 開盤", "實體K漲幅(%)"] + chip_cols
-    html_tb11 = res11[cols11].to_html(index=False, classes="styled-table sortable-table", escape=False)
+    html_tb11 = apply_color_formatting(res11[cols11]).to_html(index=False, classes="styled-table sortable-table", escape=False)
 
     # 策略 13: 逼近60日新高 (-2%以上)
     def cond13_fn(k):
@@ -950,10 +969,9 @@ def main():
     res13['近7日符合次數'] = res13_hits[cond13]
     res13["距離60日高點(%)"] = ((res13["收盤價_0"] - res13["60日最高收盤"]) / res13["60日最高收盤"] * 100).round(2)
     res13 = res13.sort_values(by=["距離60日高點(%)", "最新漲幅(%)"], ascending=[False, False])
-    res13["看盤連結"] = res13["股票代號"].apply(create_yahoo_link)
     res13 = res13.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
     cols13 = base_cols + ["60日最高收盤", "距離60日高點(%)"] + chip_cols
-    html_tb13 = res13[cols13].to_html(index=False, classes="styled-table sortable-table", escape=False)
+    html_tb13 = apply_color_formatting(res13[cols13]).to_html(index=False, classes="styled-table sortable-table", escape=False)
 
     # 策略 14: 創 20 日高 + 法人七日不賣
     def cond14_fn(k):
@@ -970,18 +988,18 @@ def main():
         (df_merge['成交量_0'] > df_merge['成交量_1']) & (df_merge['成交量_1'] > 0) &
         (df_merge['收盤價_0'] > df_merge['20日最高收盤']) &
         (df_merge['外資_0'] >= 0) & (df_merge['外資_1'] >= 0) & (df_merge['外資_2'] >= 0) &
-        (df_merge['外資_3'] >= 0) & (df_merge['外資_4'] >= 0) & (df_merge['外資_5'] >= 0) & (df_merge['外資_6'] >= 0) &
-        (df_merge['投信_0'] >= 0) & (df_merge['投信_1'] >= 0) & (df_merge['投信_2'] >= 0) &
-        (df_merge['投信_3'] >= 0) & (df_merge['投信_4'] >= 0) & (df_merge['投信_5'] >= 0) & (df_merge['投信_6'] >= 0)
+        (df_merge['外資_3'] >= 0) & (df_merge['外資_4'] >= 0) & (df_merge['外資_5'] >= 0) &
+        (df_merge['外資_6'] >= 0) & (df_merge['投信_0'] >= 0) & (df_merge['投信_1'] >= 0) &
+        (df_merge['投信_2'] >= 0) & (df_merge['投信_3'] >= 0) & (df_merge['投信_4'] >= 0) &
+        (df_merge['投信_5'] >= 0) & (df_merge['投信_6'] >= 0)
     )
     res14 = df_merge[cond14].copy()
     res14['近7日符合次數'] = res14_hits[cond14]
     res14["增量倍數"] = (res14["成交量_0"] / res14["成交量_1"]).round(2)
     res14 = res14.sort_values(by=["最新漲幅(%)", "增量倍數"], ascending=[False, False])
-    res14["看盤連結"] = res14["股票代號"].apply(create_yahoo_link)
     res14 = res14.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)", "外資_0": "最新日外資(張)"})
     cols14 = base_cols + ["最新日外資(張)", "外資連買天數", "連漲天數", "增量倍數"] + chip_cols
-    html_tb14 = res14[cols14].to_html(index=False, classes="styled-table sortable-table", escape=False)
+    html_tb14 = apply_color_formatting(res14[cols14]).to_html(index=False, classes="styled-table sortable-table", escape=False)
 
     # 策略 15: 壓縮突破 60 日高
     def cond15_fn(k):
@@ -1004,10 +1022,9 @@ def main():
     res15["60日震幅(%)"] = ((res15["收盤價_0"] - res15["60日最低收盤"]) / res15["60日最低收盤"] * 100).round(2)
     res15_strict = res15[(res15['創60日最大量']) & (res15['60日震幅(%)'] <= 10.0)]
     res15 = res15.sort_values(by=["60日震幅(%)", "增量倍數"], ascending=[True, False]) 
-    res15["看盤連結"] = res15["股票代號"].apply(create_yahoo_link)
     res15 = res15.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
     cols15 = base_cols + ["20日震幅(%)", "40日震幅(%)", "60日震幅(%)", "增量倍數"] + chip_cols
-    html_tb15 = res15[cols15].to_html(index=False, classes="styled-table sortable-table", escape=False)
+    html_tb15 = apply_color_formatting(res15[cols15]).to_html(index=False, classes="styled-table sortable-table", escape=False)
 
     # 策略 16: 突破最大量高點 (第一天突破) + 雙法人七日不賣
     def cond16_fn(k):
@@ -1035,10 +1052,9 @@ def main():
     res16['近7日符合次數'] = res16_hits[cond16]
     res16["增量倍數"] = (res16["成交量_0"] / res16["成交量_1"]).round(2)
     res16 = res16.sort_values(by=["最新漲幅(%)", "增量倍數"], ascending=[False, False])
-    res16["看盤連結"] = res16["股票代號"].apply(create_yahoo_link)
     res16 = res16.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
     cols16 = base_cols + ["最大量日最高價", "增量倍數"] + chip_cols
-    html_tb16 = res16[cols16].to_html(index=False, classes="styled-table sortable-table", escape=False)
+    html_tb16 = apply_color_formatting(res16[cols16]).to_html(index=False, classes="styled-table sortable-table", escape=False)
 
     # 策略 17: 收盤價創 120 日新高
     def cond17_fn(k):
@@ -1056,10 +1072,9 @@ def main():
     res17['近7日符合次數'] = res17_hits[cond17]
     res17["增量倍數"] = (res17["成交量_0"] / res17["成交量_1"]).round(2)
     res17 = res17.sort_values(by=["最新漲幅(%)", "增量倍數"], ascending=[False, False])
-    res17["看盤連結"] = res17["股票代號"].apply(create_yahoo_link)
     res17 = res17.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
     cols17 = base_cols + ["120日最高收盤", "增量倍數"] + chip_cols
-    html_tb17 = res17[cols17].to_html(index=False, classes="styled-table sortable-table", escape=False)
+    html_tb17 = apply_color_formatting(res17[cols17]).to_html(index=False, classes="styled-table sortable-table", escape=False)
 
     # 策略 12: 綜合排行 (前 50 名)
     st_lists = [
@@ -1084,12 +1099,11 @@ def main():
     if hit_counts:
         df_hits = pd.DataFrame([{"股票代號": k, "入選次數": v, "符合策略": ", ".join(hit_names[k])} for k, v in hit_counts.items()])
         res12 = pd.merge(df_hits, df_merge, on="股票代號", how="inner")
-        res12['近7日符合次數'] = res12['入選次數'].apply(lambda x: f"共命中 {x} 策略")
+        res12['近7日符合次數'] = res12['入選次數'].apply(lambda x: f"命中 {x} 個策略")
         res12 = res12.sort_values(by=["入選次數", "最新漲幅(%)"], ascending=[False, False]).head(50)
-        res12["看盤連結"] = res12["股票代號"].apply(create_yahoo_link)
         res12 = res12.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
         cols12 = base_cols + ["入選次數", "符合策略"] + chip_cols
-        html_tb12 = res12[cols12].to_html(index=False, classes="styled-table sortable-table", escape=False)
+        html_tb12 = apply_color_formatting(res12[cols12]).to_html(index=False, classes="styled-table sortable-table", escape=False)
     else:
         html_tb12 = "<p style='text-align:center;'>目前無任何股票入選預設策略</p>"
 
@@ -1132,7 +1146,7 @@ def main():
             .app-header {{
                 background: linear-gradient(135deg, var(--primary), var(--primary-light));
                 color: white;
-                padding: 16px 20px;
+                padding: 12px 16px;
                 position: sticky;
                 top: 0;
                 z-index: 100;
@@ -1141,75 +1155,73 @@ def main():
 
             .app-header h1 {{
                 margin: 0;
-                font-size: 19px;
+                font-size: 18px;
                 font-weight: 700;
                 letter-spacing: 0.5px;
                 display: flex;
                 align-items: center;
-                gap: 8px;
+                gap: 6px;
             }}
 
             .app-header p {{
-                margin: 4px 0 0 0;
-                font-size: 12px;
+                margin: 2px 0 0 0;
+                font-size: 11px;
                 opacity: 0.85;
             }}
 
-            /* 水平滾動膠囊 Tab */
+            /* 多列包覆排版按鈕 (Wrap) */
             .tabs-wrapper {{
                 background: white;
                 border-bottom: 1px solid var(--border);
                 position: sticky;
-                top: 65px;
+                top: 55px;
                 z-index: 90;
-                padding: 10px 12px;
-                overflow-x: auto;
-                white-space: nowrap;
-                scrollbar-width: none;
-                -ms-overflow-style: none;
+                padding: 8px 10px;
+                display: flex;
+                flex-wrap: wrap;
+                gap: 4px;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.02);
             }}
-            .tabs-wrapper::-webkit-scrollbar {{ display: none; }}
 
             .tab-btn {{
                 background: #f1f5f9;
-                border: 1px solid transparent;
+                border: 1px solid var(--border);
                 outline: none;
                 cursor: pointer;
-                padding: 7px 14px;
-                border-radius: 20px;
-                font-size: 13px;
+                padding: 4px 8px;
+                border-radius: 6px;
+                font-size: 11px;
                 font-weight: 600;
                 color: var(--text-muted);
-                margin-right: 6px;
-                display: inline-block;
-                transition: all 0.2s ease;
+                transition: all 0.15s ease;
             }}
 
             .tab-btn.active {{
                 background: var(--primary);
                 color: white;
-                box-shadow: 0 2px 6px rgba(30, 58, 138, 0.25);
+                border-color: var(--primary);
+                box-shadow: 0 2px 4px rgba(30, 58, 138, 0.2);
             }}
 
             .container {{
-                padding: 12px;
-                max-width: 1400px;
+                padding: 8px;
+                max-width: 1500px;
                 margin: 0 auto;
             }}
 
             .info-box {{
                 background: var(--card-bg);
-                border-radius: 12px;
-                padding: 14px 16px;
-                margin-bottom: 12px;
+                border-radius: 8px;
+                padding: 10px 12px;
+                margin-bottom: 8px;
                 border: 1px solid var(--border);
                 box-shadow: 0 1px 3px rgba(0,0,0,0.04);
             }}
 
             .info-box p {{
                 margin: 0;
-                font-size: 13px;
-                line-height: 1.5;
+                font-size: 12px;
+                line-height: 1.4;
                 color: var(--text-muted);
             }}
 
@@ -1222,40 +1234,41 @@ def main():
                 align-items: center;
                 background: #fee2e2;
                 color: var(--up-red);
-                padding: 2px 8px;
-                border-radius: 6px;
+                padding: 1px 6px;
+                border-radius: 4px;
                 font-weight: 700;
-                font-size: 14px;
-                margin-top: 8px;
+                font-size: 12px;
+                margin-top: 6px;
             }}
 
             .filter-container {{
                 display: flex;
                 flex-wrap: wrap;
-                gap: 8px;
-                margin-top: 10px;
-                padding-top: 10px;
+                gap: 6px;
+                margin-top: 8px;
+                padding-top: 8px;
                 border-top: 1px dashed var(--border);
             }}
 
             .custom-select {{
-                padding: 6px 12px;
-                font-size: 12px;
+                padding: 4px 8px;
+                font-size: 11px;
                 font-weight: 600;
-                border-radius: 8px;
+                border-radius: 6px;
                 border: 1px solid #cbd5e1;
                 background-color: white;
                 color: var(--text);
                 outline: none;
-                flex: 1 1 calc(50% - 8px);
-                min-width: 130px;
+                flex: 1 1 calc(50% - 6px);
+                min-width: 110px;
             }}
 
-            /* 手機凍結視窗表格核心 */
+            /* 表格容器：開啟高度限制與滾動，實現吸頂 */
             .table-container {{
                 background: var(--card-bg);
-                border-radius: 12px;
-                overflow-x: auto;
+                border-radius: 8px;
+                overflow: auto;
+                max-height: 75vh;
                 border: 1px solid var(--border);
                 box-shadow: 0 2px 8px rgba(0,0,0,0.04);
                 position: relative;
@@ -1266,57 +1279,71 @@ def main():
                 border-collapse: separate;
                 border-spacing: 0;
                 width: 100%;
-                font-size: 13px;
+                font-size: 12px;
                 text-align: center;
             }}
 
+            /* 表頭吸頂固定與換行設定 */
             .styled-table th {{
                 background-color: #f8fafc;
                 color: var(--text-muted);
                 font-weight: 600;
-                padding: 12px 10px;
-                white-space: nowrap;
+                padding: 6px 4px;
+                white-space: normal;
+                word-break: keep-all;
                 border-bottom: 2px solid var(--border);
                 cursor: pointer;
                 user-select: none;
+                position: sticky;
+                top: 0;
+                z-index: 20;
+                line-height: 1.25;
             }}
 
-            .styled-table th::after {{ content: ' ↕'; opacity: 0.3; font-size: 10px; }}
+            .styled-table th::after {{ content: ' ↕'; opacity: 0.3; font-size: 9px; }}
             .styled-table th.th-sort-asc::after {{ content: ' ↑'; opacity: 1; color: var(--primary-light); }}
             .styled-table th.th-sort-desc::after {{ content: ' ↓'; opacity: 1; color: var(--primary-light); }}
 
             .styled-table td {{
-                padding: 12px 10px;
+                padding: 6px 4px;
                 border-bottom: 1px solid var(--border);
                 white-space: nowrap;
                 vertical-align: middle;
                 background-color: white;
+                line-height: 1.2;
             }}
 
             .styled-table tr:last-child td {{
                 border-bottom: none;
             }}
 
-            /* 凍結前兩欄：星星 + 股票代號/名稱 */
+            /* 凍結前兩欄：星星 + 標的 (代號+名稱超連結) */
             .styled-table th:nth-child(1),
             .styled-table td:nth-child(1) {{
                 position: sticky;
                 left: 0;
                 z-index: 10;
                 background-color: #f8fafc;
-                min-width: 44px;
-                max-width: 44px;
+                min-width: 36px;
+                max-width: 36px;
             }}
 
             .styled-table th:nth-child(3),
             .styled-table td:nth-child(3) {{
                 position: sticky;
-                left: 44px;
+                left: 36px;
                 z-index: 10;
                 background-color: #f8fafc;
-                box-shadow: 3px 0 6px -2px rgba(0,0,0,0.08);
-                min-width: 75px;
-                font-weight: 700;
+                box-shadow: 2px 0 4px -1px rgba(0,0,0,0.08);
+                min-width: 72px;
+                max-width: 80px;
+            }}
+
+            /* 左上角交叉處擁有最高層級 (吸頂+吸左) */
+            .styled-table th:nth-child(1),
+            .styled-table th:nth-child(3) {{
+                z-index: 30;
+                background-color: #f1f5f9;
             }}
 
             .styled-table td:nth-child(1),
@@ -1328,35 +1355,63 @@ def main():
                 background-color: #fefce8 !important;
             }}
 
+            /* 合併代號與名稱的 cell 樣式 */
+            .stock-link {{
+                text-decoration: none;
+                display: block;
+                color: inherit;
+            }}
+            .stock-name {{
+                font-weight: 700;
+                font-size: 13px;
+                color: var(--text);
+                line-height: 1.1;
+                margin-bottom: 2px;
+            }}
+            .stock-code {{
+                font-size: 10px;
+                color: var(--text-muted);
+                line-height: 1;
+            }}
+            .stock-link:hover .stock-name {{
+                color: var(--primary-light);
+            }}
+
+            /* 紅漲綠跌標籤樣式 */
+            .tag-up {{
+                color: #dc2626;
+                font-weight: 700;
+                display: inline-block;
+            }}
+            .tag-down {{
+                color: #16a34a;
+                font-weight: 700;
+                display: inline-block;
+            }}
+            .tag-flat {{
+                color: #64748b;
+                font-weight: 600;
+                display: inline-block;
+            }}
+
             .fav-star {{
                 cursor: pointer;
                 color: #cbd5e1;
-                font-size: 20px;
-                padding: 4px 8px;
+                font-size: 18px;
+                padding: 2px;
                 display: inline-block;
                 transition: transform 0.15s ease;
             }}
-            .fav-star:active {{ transform: scale(1.3); }}
+            .fav-star:active {{ transform: scale(1.2); }}
             .fav-star.active {{ color: var(--star); font-weight: bold; }}
-
-            .btn {{
-                background-color: var(--primary-light);
-                color: white;
-                padding: 4px 8px;
-                text-decoration: none;
-                border-radius: 6px;
-                font-weight: 600;
-                font-size: 11px;
-                display: inline-block;
-            }}
 
             .warning-box {{
                 background-color: #fff1f2;
                 color: #be123c;
-                padding: 12px;
-                border-radius: 8px;
-                margin-bottom: 12px;
-                font-size: 12px;
+                padding: 8px 12px;
+                border-radius: 6px;
+                margin-bottom: 8px;
+                font-size: 11px;
                 font-weight: 600;
                 border: 1px solid #fecdd3;
             }}
@@ -1575,9 +1630,6 @@ def main():
                 document.querySelectorAll(".tab-btn").forEach(el => el.classList.remove("active"));
                 document.getElementById(strategyName).style.display = "block";
                 evt.currentTarget.classList.add("active");
-                
-                // 自動將點擊的 Tab 滑入可視區域中央
-                evt.currentTarget.scrollIntoView({{ behavior: 'smooth', inline: 'center', block: 'nearest' }});
             }}
 
             function setupFavorites() {{
@@ -1622,8 +1674,8 @@ def main():
                             numA = parseFloat(cellAStr.split('/')[0]);
                             numB = parseFloat(cellBStr.split('/')[0]);
                         }} else {{
-                            numA = parseFloat(cellAStr.replace(/,/g, ''));
-                            numB = parseFloat(cellBStr.replace(/,/g, ''));
+                            numA = parseFloat(cellAStr.replace(/,/g, '').replace(/%/g, '').replace(/\\+/g, ''));
+                            numB = parseFloat(cellBStr.replace(/,/g, '').replace(/%/g, '').replace(/\\+/g, ''));
                         }}
 
                         const multiplier = isAscending ? 1 : -1;
@@ -1828,7 +1880,7 @@ def main():
                     let cells = row.querySelectorAll("td");
                     let isMaxVol = row.getAttribute('data-is-max-vol') === "true"; 
                     let targetAmpIdx = period === "20" ? idxAmp20 : (period === "40" ? idxAmp40 : idxAmp60);
-                    let ampVal = parseFloat(cells[targetAmpIdx].innerText);
+                    let ampVal = parseFloat(cells[targetAmpIdx].innerText.replace(/,/g, '').replace(/%/g, ''));
 
                     let show = (parseFloat(cells[idxVol].innerText) >= minVol) && (ampVal <= maxRange);
                     if (checkMaxVol === "yes" && !isMaxVol) show = false;
@@ -1882,8 +1934,10 @@ def main():
                     let is5High = cells[idx5].innerText.includes("是");
                     let is20High = cells[idx20].innerText.includes("是");
 
-                    let show = (parseFloat(cells[idxPct].innerText) >= pctMin) &&
-                               (parseFloat(cells[idxTdcc].innerText) >= tdccMin);
+                    let valPct = parseFloat(cells[idxPct].innerText.replace(/,/g, '').replace(/%/g, '').replace(/\\+/g, ''));
+                    let valTdcc = parseFloat(cells[idxTdcc].innerText.replace(/,/g, ''));
+
+                    let show = (valPct >= pctMin) && (valTdcc >= tdccMin);
 
                     if (highCond === "5" && !is5High) show = false;
                     if (highCond === "20" && !is20High) show = false;
@@ -1905,7 +1959,8 @@ def main():
 
                 let count = 0;
                 table.querySelectorAll("tbody tr").forEach(row => {{
-                    let show = parseFloat(row.querySelectorAll("td")[idxPct].innerText) >= minPct;
+                    let valPct = parseFloat(row.querySelectorAll("td")[idxPct].innerText.replace(/,/g, '').replace(/%/g, '').replace(/\\+/g, ''));
+                    let show = valPct >= minPct;
                     row.style.display = show ? "" : "none";
                     if(show) count++;
                 }});
@@ -1923,7 +1978,8 @@ def main():
 
                 let count = 0;
                 table.querySelectorAll("tbody tr").forEach(row => {{
-                    let show = parseFloat(row.querySelectorAll("td")[idxK].innerText) >= minK;
+                    let valK = parseFloat(row.querySelectorAll("td")[idxK].innerText.replace(/,/g, '').replace(/%/g, '').replace(/\\+/g, ''));
+                    let show = valK >= minK;
                     row.style.display = show ? "" : "none";
                     if(show) count++;
                 }});
@@ -1941,7 +1997,8 @@ def main():
 
                 let count = 0;
                 table.querySelectorAll("tbody tr").forEach(row => {{
-                    let show = parseFloat(row.querySelectorAll("td")[idxDist].innerText) >= minDist;
+                    let valDist = parseFloat(row.querySelectorAll("td")[idxDist].innerText.replace(/,/g, '').replace(/%/g, ''));
+                    let show = valDist >= minDist;
                     row.style.display = show ? "" : "none";
                     if(show) count++;
                 }});
@@ -1977,17 +2034,18 @@ def main():
 
     for code, row in res15.iterrows():
         is_max_vol = "true" if row['創60日最大量'] else "false"
-        search_str = f"<tr>\n      <td><span class='fav-star'>☆</span></td>\n      <td>{row['市場']}</td>\n      <td>{row['股票代號']}</td>"
-        replace_str = f"<tr data-is-max-vol='{is_max_vol}'>\n      <td><span class='fav-star'>☆</span></td>\n      <td>{row['市場']}</td>\n      <td>{row['股票代號']}</td>"
+        search_str = f"<tr>\n      <td><span class='fav-star'>☆</span></td>\n      <td>{row['市場']}</td>"
+        replace_str = f"<tr data-is-max-vol='{is_max_vol}'>\n      <td><span class='fav-star'>☆</span></td>\n      <td>{row['市場']}</td>"
         html_content = html_content.replace(search_str, replace_str)
 
-    html_filename = f"Multi_Strategy_Filter_{date_0}.html"
+    html_filename = "index.html"
     file_path = os.path.abspath(html_filename)
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(html_content)
 
-    print(f"\n✅ 手機優化網頁已生成！正在為您開啟: {html_filename}")
-    webbrowser.open(f"file:///{file_path}")
+    print(f"\n✅ 緊湊版網頁已生成: {html_filename}")
+    if os.environ.get("GITHUB_ACTIONS") != "true":
+        webbrowser.open(f"file:///{file_path}")
 
 if __name__ == "__main__":
     main()

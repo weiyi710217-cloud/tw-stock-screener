@@ -382,7 +382,7 @@ def get_foreign_holdings() -> pd.DataFrame:
     return pd.DataFrame(columns=["股票代號", "外資持股比例(%)", "發行總張數"])
 
 # ==========================================
-# 【新增】月營收資料抓取與「連續三個月月增」分析
+# 月營收資料抓取與指標分析
 # ==========================================
 def fetch_month_revenue(year_roc: int, month: int) -> pd.DataFrame:
     cache_file = os.path.join(CACHE_DIR, f"rev_{year_roc}_{month:02d}.csv")
@@ -393,7 +393,6 @@ def fetch_month_revenue(year_roc: int, month: int) -> pd.DataFrame:
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     dfs = []
-    # 抓取上市 (skey=0) 與 上櫃 (skey=1)
     for skey in [0, 1]:
         url = f"https://mops.twse.com.tw/nas/t21/skey{skey}/t21sc03_{year_roc}_{month}_0.html"
         try:
@@ -403,12 +402,11 @@ def fetch_month_revenue(year_roc: int, month: int) -> pd.DataFrame:
                 tables = pd.read_html(resp.text)
                 for t in tables:
                     if t.shape[1] >= 11 and "公司代號" in str(t.values):
-                        # 整理欄位
                         for r_idx in range(len(t)):
                             row_vals = [str(x).strip() for x in t.iloc[r_idx].values]
                             code = row_vals[0]
                             if code.isdigit() and len(code) == 4:
-                                rev = to_float(row_vals[2]) # 當月營收
+                                rev = to_float(row_vals[2])
                                 dfs.append({"股票代號": code, f"營收_{year_roc}_{month:02d}": rev})
         except Exception:
             pass
@@ -420,15 +418,13 @@ def fetch_month_revenue(year_roc: int, month: int) -> pd.DataFrame:
         return df_res
     return pd.DataFrame(columns=["股票代號", f"營收_{year_roc}_{month:02d}"])
 
-def get_consecutive_3m_revenue_growth() -> pd.DataFrame:
-    """抓取最近 4 個月的月營收，檢驗是否連續三個月月增 (M0 > M-1 > M-2 > M-3)"""
+def get_revenue_analysis() -> pd.DataFrame:
+    """抓取近 4 個月營收，計算連續三個月月增與最新月增率"""
     today = datetime.date.today()
     cur_year = today.year - 1911
     cur_month = today.month
 
-    # 決定近四個已公布/最近的營收月份
     months = []
-    # 如果當月還不到 10 號，上個月的可能還沒完全公布
     start_offset = 1 if today.day >= 12 else 2
     for i in range(start_offset, start_offset + 4):
         m = cur_month - i
@@ -452,9 +448,8 @@ def get_consecutive_3m_revenue_growth() -> pd.DataFrame:
                 df_merged = pd.merge(df_merged, df_m, on="股票代號", how="outer")
 
     if df_merged is None or len(rev_cols) < 4:
-        return pd.DataFrame(columns=["股票代號", "營收連3月月增", "最新營收月增率(%)"])
+        return pd.DataFrame(columns=["股票代號", "營收連3月月增", "最新營收月增率(%)", "營收爆發1.5倍"])
 
-    # 排序：從最舊到最新 (M-3, M-2, M-1, M0)
     rev_cols_sorted = list(reversed(rev_cols))
     m3, m2, m1, m0 = rev_cols_sorted[0], rev_cols_sorted[1], rev_cols_sorted[2], rev_cols_sorted[3]
 
@@ -463,17 +458,24 @@ def get_consecutive_3m_revenue_growth() -> pd.DataFrame:
             df_merged[c] = 0.0
         df_merged[c] = pd.to_numeric(df_merged[c], errors="coerce").fillna(0)
 
-    # 連續三個月月增條件：M0 > M1 且 M1 > M2 且 M2 > M3 且皆大於 0
-    cond_growth = (
+    # 1. 連續三個月月增
+    cond_growth_3m = (
         (df_merged[m0] > df_merged[m1]) &
         (df_merged[m1] > df_merged[m2]) &
         (df_merged[m2] > df_merged[m3]) &
         (df_merged[m3] > 0)
     )
 
-    df_merged['營收連3月月增'] = cond_growth
-    df_merged['最新營收月增率(%)'] = (((df_merged[m0] - df_merged[m1]) / df_merged[m1]) * 100).round(2)
-    return df_merged[["股票代號", "營收連3月月增", "最新營收月增率(%)"]]
+    # 2. 最新營收月增率
+    df_merged['最新營收月增率(%)'] = (((df_merged[m0] - df_merged[m1]) / df_merged[m1].replace(0, float('nan'))) * 100).round(2).fillna(0.0)
+
+    # 3. 最新月營收為前一個月的 1.5 倍以上 (月增率 >= 50%)
+    cond_surge_1_5x = (df_merged[m1] > 0) & (df_merged[m0] >= df_merged[m1] * 1.5)
+
+    df_merged['營收連3月月增'] = cond_growth_3m
+    df_merged['營收爆發1.5倍'] = cond_surge_1_5x
+
+    return df_merged[["股票代號", "營收連3月月增", "最新營收月增率(%)", "營收爆發1.5倍"]]
 
 # ==========================================
 # 核心選股與報表產生
@@ -539,7 +541,7 @@ def main():
 
     df_tdcc = get_tdcc_data()
     df_holdings = get_foreign_holdings()
-    df_revenue = get_consecutive_3m_revenue_growth()
+    df_revenue = get_revenue_analysis()
 
     df_0_merge = df_0.copy()
     df_0_merge.columns = [f"{c}_0" if c not in ["市場", "股票代號", "股票名稱"] else c for c in df_0_merge.columns]
@@ -654,14 +656,16 @@ def main():
     else:
         df_merge['外資近月買超佔持股(%)'] = 0.0
 
-    # 合併月營收指標
+    # 合併營收指標
     if not df_revenue.empty:
         df_merge = pd.merge(df_merge, df_revenue, on='股票代號', how='left')
         df_merge['營收連3月月增'] = df_merge['營收連3月月增'].fillna(False)
         df_merge['最新營收月增率(%)'] = df_merge['最新營收月增率(%)'].fillna(0.0)
+        df_merge['營收爆發1.5倍'] = df_merge['營收爆發1.5倍'].fillna(False)
     else:
         df_merge['營收連3月月增'] = False
         df_merge['最新營收月增率(%)'] = 0.0
+        df_merge['營收爆發1.5倍'] = False
 
     d0_s = f"{date_0[4:6]}/{date_0[6:]}"
     d1_s = f"{date_1[4:6]}/{date_1[6:]}"
@@ -1156,7 +1160,7 @@ def main():
     cols16 = base_cols + ["最大量日最高價", "增量倍數"] + chip_cols
     html_tb16 = apply_color_formatting(res16[cols16]).to_html(index=False, classes="styled-table sortable-table", escape=False)
 
-    # 策略 17: 創 120 日高
+    # 策略 17
     def cond17_fn(k):
         close_120 = [f'收盤價_{k+j}' for j in range(1, 121) if f'收盤價_{k+j}' in df_merge]
         if not close_120: return pd.Series(False, index=df_merge.index)
@@ -1177,28 +1181,20 @@ def main():
     html_tb17 = apply_color_formatting(res17[cols17]).to_html(index=False, classes="styled-table sortable-table", escape=False)
 
     # ==========================
-    # 【新增】策略 18: 營收連3月月增 + 第一天出量 + 股價漲 + 雙法人七日不賣
+    # 【更新】策略 18: 營收連3月月增 + 第一天出量 + 股價漲 (拿掉法人7天不賣條件)
     # ==========================
     def cond18_fn(k):
         rev_ok = df_merge['營收連3月月增']
         vol_first = (df_merge[f'成交量_{k}'] >= df_merge[f'成交量_{k+1}'] * 1.2) & (df_merge[f'成交量_{k+1}'] <= df_merge[f'成交量_{k+2}'])
         p_up = df_merge[f'收盤價_{k}'] > df_merge[f'收盤價_{k+1}']
-        hold_7 = True
-        for j in range(7):
-            hold_7 = hold_7 & (df_merge[f'外資_{k+j}'] >= 0) & (df_merge[f'投信_{k+j}'] >= 0)
-        return rev_ok & vol_first & p_up & hold_7
+        return rev_ok & vol_first & p_up
 
     res18_hits = eval_rolling_condition(cond18_fn)
     cond18 = (
         (df_merge['營收連3月月增'] == True) &
         (df_merge['成交量_0'] >= df_merge['成交量_1'] * 1.2) &
-        (df_merge['成交量_1'] <= df_merge['成交量_2']) & # 確保昨日無爆量，今日為「第一天出量」
-        (df_merge['最新漲幅(%)'] > 0) &
-        (df_merge['外資_0'] >= 0) & (df_merge['外資_1'] >= 0) & (df_merge['外資_2'] >= 0) &
-        (df_merge['外資_3'] >= 0) & (df_merge['外資_4'] >= 0) & (df_merge['外資_5'] >= 0) &
-        (df_merge['外資_6'] >= 0) & (df_merge['投信_0'] >= 0) & (df_merge['投信_1'] >= 0) &
-        (df_merge['投信_2'] >= 0) & (df_merge['投信_3'] >= 0) & (df_merge['投信_4'] >= 0) &
-        (df_merge['投信_5'] >= 0) & (df_merge['投信_6'] >= 0)
+        (df_merge['成交量_1'] <= df_merge['成交量_2']) & # 第一天出量
+        (df_merge['最新漲幅(%)'] > 0)
     )
     res18 = df_merge[cond18].copy()
     res18['近7日符合次數'] = res18_hits[cond18]
@@ -1208,7 +1204,29 @@ def main():
     cols18 = base_cols + ["最新營收月增率(%)", "增量倍數"] + chip_cols
     html_tb18 = apply_color_formatting(res18[cols18]).to_html(index=False, classes="styled-table sortable-table", escape=False)
 
-    # 策略 12: 綜合排行 (前 50 名) - 納入策略 18
+    # ==========================
+    # 【新增】策略 19: 最新營收暴增 1.5 倍以上 + 第一天出量
+    # ==========================
+    def cond19_fn(k):
+        rev_1_5x = df_merge['營收爆發1.5倍']
+        vol_first = (df_merge[f'成交量_{k}'] >= df_merge[f'成交量_{k+1}'] * 1.2) & (df_merge[f'成交量_{k+1}'] <= df_merge[f'成交量_{k+2}'])
+        return rev_1_5x & vol_first
+
+    res19_hits = eval_rolling_condition(cond19_fn)
+    cond19 = (
+        (df_merge['營收爆發1.5倍'] == True) &
+        (df_merge['成交量_0'] >= df_merge['成交量_1'] * 1.2) &
+        (df_merge['成交量_1'] <= df_merge['成交量_2']) # 第一天出量
+    )
+    res19 = df_merge[cond19].copy()
+    res19['近7日符合次數'] = res19_hits[cond19]
+    res19["增量倍數"] = (res19["成交量_0"] / res19["成交量_1"]).round(2)
+    res19 = res19.sort_values(by=["最新營收月增率(%)", "最新漲幅(%)"], ascending=[False, False])
+    res19 = res19.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
+    cols19 = base_cols + ["最新營收月增率(%)", "增量倍數"] + chip_cols
+    html_tb19 = apply_color_formatting(res19[cols19]).to_html(index=False, classes="styled-table sortable-table", escape=False)
+
+    # 策略 12: 綜合排行 (前 50 名) - 納入策略 18 與 策略 19
     st_lists = [
         ("1.跳空", res1), ("2.墊高", res2), ("3.量增法人", res3),
         ("4.創20日高", res4), ("5.拔蔥", res5), ("6.五日高", res6),
@@ -1216,7 +1234,7 @@ def main():
         ("10.上櫃強勢", res10), ("11.上櫃實體紅K", res11), ("13.逼近60日高", res13),
         ("14.創20日高+法人七日不賣", res14), ("15.壓縮突破60日高", res15_strict),
         ("16.突破最大量高點", res16), ("17.創120日新高", res17),
-        ("18.營收連三增突破", res18)
+        ("18.營收連三增啟動", res18), ("19.營收暴增1.5倍", res19)
     ]
     
     hit_counts = {}
@@ -1553,6 +1571,7 @@ def main():
 
         <div class="tabs-wrapper">
             <button class="tab-btn active" onclick="openStrategy(event, 'Strat12')">🌟 12. 綜合排行</button>
+            <button class="tab-btn" onclick="openStrategy(event, 'Strat19')">⚡ 19. 營收暴增1.5倍</button>
             <button class="tab-btn" onclick="openStrategy(event, 'Strat18')">💎 18. 營收三連增啟動</button>
             <button class="tab-btn" onclick="openStrategy(event, 'Strat17')">🏆 17. 創120日高</button>
             <button class="tab-btn" onclick="openStrategy(event, 'Strat16')">🔥 16. 最大量高點</button>
@@ -1577,15 +1596,23 @@ def main():
 
             <div id="Strat12" class="tabcontent" style="display: block;">
                 <div class="info-box">
-                    <p>🎯 <b>選股邏輯：</b> 統計所有策略(1~11, 13~18)預設條件下，選中最多次的股票排序。</p>
+                    <p>🎯 <b>選股邏輯：</b> 統計所有策略(1~11, 13~19)預設條件下，選中最多次的股票排序。</p>
                     <div class="count-badge">✅ 前 50 名強勢標的</div>
                 </div>
                 <div class="table-container">{html_tb12}</div>
             </div>
 
+            <div id="Strat19" class="tabcontent">
+                <div class="info-box">
+                    <p>🎯 <b>選股邏輯：</b> 1. 最新一個月營收為前一個月的 1.5 倍以上 (月增率 &ge; 50%) | 2. 今日第一天出量 (&ge; 1.2倍且昨未爆量)。</p>
+                    <div class="count-badge">符合：<span id="count_Strat19">{len(res19)}</span> 檔</div>
+                </div>
+                <div class="table-container">{html_tb19}</div>
+            </div>
+
             <div id="Strat18" class="tabcontent">
                 <div class="info-box">
-                    <p>🎯 <b>選股邏輯：</b> 1. 連續三個月營收月增 (MoM) | 2. 今日第一天出量 (&ge; 1.2倍且昨未爆量) | 3. 股價收紅 | 4. 外資與投信近7天任一日皆無賣出。</p>
+                    <p>🎯 <b>選股邏輯：</b> 1. 連續三個月營收月增 (MoM) | 2. 今日第一天出量 (&ge; 1.2倍且昨未爆量) | 3. 股價收紅。法人買賣超於表內呈現。</p>
                     <div class="count-badge">符合：<span id="count_Strat18">{len(res18)}</span> 檔</div>
                 </div>
                 <div class="table-container">{html_tb18}</div>
@@ -1927,7 +1954,7 @@ def main():
                 table.querySelectorAll("tbody tr").forEach(row => {{
                     let cells = row.querySelectorAll("td");
                     let show = (parseFloat(cells[idxVol].innerText) <= maxVol) &&
-                               (parseInt(cells[idxVolDays].innerText) >= minStep) &&
+                               (parseInt(cells[idxStep].innerText) >= minStep) &&
                                (parseInt(cells[idxVolDays].innerText) >= minVolDays) &&
                                (parseInt(cells[idxFBuy].innerText) >= minFBuy);
                     row.style.display = show ? "" : "none";
@@ -2178,7 +2205,7 @@ def main():
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(html_content)
 
-    print(f"\n✅ 策略18已新增，網頁已生成: {html_filename}")
+    print(f"\n✅ 策略 18 條件放寬已更新、策略 19 已新增，網頁已生成: {html_filename}")
     if os.environ.get("GITHUB_ACTIONS") != "true":
         webbrowser.open(f"file:///{file_path}")
 

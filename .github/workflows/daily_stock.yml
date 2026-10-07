@@ -43,7 +43,7 @@ jobs:
 
       - name: 5. 執行多策略選股
         run: |
-          python script.py
+         python -u script.py
 
       - name: 6. 準備發布檔案
         run: |

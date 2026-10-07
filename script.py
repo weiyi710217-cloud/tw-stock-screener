@@ -2146,8 +2146,10 @@ def main():
         f.write(html_content)
 
     print(f"\n✅ 手機優化網頁已生成！正在為您開啟: {html_filename}")
-    webbrowser.open(f"file:///{file_path}")
-
+   # webbrowser.open(f"file:///{file_path}")
+# 確保只有在非 GitHub Actions 環境（本機電腦）才開瀏覽器
+    if os.environ.get("GITHUB_ACTIONS") != "true":
+        webbrowser.open(f"file:///{file_path}")
 
 if __name__ == "__main__":
     main()

@@ -1174,7 +1174,7 @@ def main():
     cols17 = base_cols + ["120日最高收盤", "增量倍數"] + chip_cols
     html_tb17 = apply_color_formatting(res17[cols17]).to_html(index=False, classes="styled-table sortable-table", escape=False)
 
-    # 策略 18: 營收連3月月增 + 第一天出量 + 股價漲 (拿掉法人7天不賣條件)
+    # 策略 18: 營收連3月月增 + 第一天出量 + 股價漲
     def cond18_fn(k):
         rev_ok = df_merge['營收連3月月增']
         vol_first = (df_merge[f'成交量_{k}'] >= df_merge[f'成交量_{k+1}'] * 1.2) & (df_merge[f'成交量_{k+1}'] <= df_merge[f'成交量_{k+2}'])
@@ -1216,9 +1216,7 @@ def main():
     cols19 = base_cols + ["最新營收月增率(%)", "增量倍數"] + chip_cols
     html_tb19 = apply_color_formatting(res19[cols19]).to_html(index=False, classes="styled-table sortable-table", escape=False)
 
-    # ==========================
-    # 【新增】策略 20: 外資連三買且越買越多 + 第一天出量 + 股價上漲
-    # ==========================
+    # 策略 20: 外資連三買且越買越多 + 第一天出量 + 股價上漲
     def cond20_fn(k):
         f_more = (df_merge[f'外資_{k}'] > df_merge[f'外資_{k+1}']) & \
                  (df_merge[f'外資_{k+1}'] > df_merge[f'外資_{k+2}']) & \
@@ -1231,9 +1229,9 @@ def main():
     cond20 = (
         (df_merge['外資_0'] > df_merge['外資_1']) &
         (df_merge['外資_1'] > df_merge['外資_2']) &
-        (df_merge['外資_2'] > 0) & # 外資連三買且越買越多
-        (df_merge['成交量_0'] >= df_merge['成交量_1'] * 1.2) & # 出量
-        (df_merge['最新漲幅(%)'] > 0) # 股價上漲
+        (df_merge['外資_2'] > 0) &
+        (df_merge['成交量_0'] >= df_merge['成交量_1'] * 1.2) &
+        (df_merge['最新漲幅(%)'] > 0)
     )
     res20 = df_merge[cond20].copy()
     res20['近7日符合次數'] = res20_hits[cond20]
@@ -1322,16 +1320,16 @@ def main():
             .app-header {{
                 background: linear-gradient(135deg, var(--primary), var(--primary-light));
                 color: white;
-                padding: 12px 16px;
+                padding: 10px 16px;
                 position: sticky;
                 top: 0;
                 z-index: 100;
-                box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+                box-shadow: 0 2px 8px rgba(0,0,0,0.08);
             }}
 
             .app-header h1 {{
                 margin: 0;
-                font-size: 18px;
+                font-size: 16px;
                 font-weight: 700;
                 letter-spacing: 0.5px;
                 display: flex;
@@ -1345,29 +1343,36 @@ def main():
                 opacity: 0.85;
             }}
 
+            /* 單列水平滑動膠囊標籤 */
             .tabs-wrapper {{
                 background: white;
                 border-bottom: 1px solid var(--border);
                 position: sticky;
-                top: 55px;
+                top: 48px;
                 z-index: 90;
-                padding: 8px 10px;
+                padding: 6px 10px;
                 display: flex;
-                flex-wrap: wrap;
-                gap: 4px;
+                flex-wrap: nowrap;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                scrollbar-width: none;
+                gap: 6px;
                 box-shadow: 0 2px 4px rgba(0,0,0,0.02);
             }}
+            .tabs-wrapper::-webkit-scrollbar {{ display: none; }}
 
             .tab-btn {{
                 background: #f1f5f9;
                 border: 1px solid var(--border);
                 outline: none;
                 cursor: pointer;
-                padding: 4px 8px;
-                border-radius: 6px;
-                font-size: 11px;
+                padding: 5px 12px;
+                border-radius: 16px;
+                font-size: 12px;
                 font-weight: 600;
                 color: var(--text-muted);
+                white-space: nowrap;
+                flex-shrink: 0;
                 transition: all 0.15s ease;
             }}
 
@@ -1594,7 +1599,7 @@ def main():
             <p>歷史區間: T-120日 ({date_120}) ➔ 最新日 ({date_0})</p>
         </div>
 
-        <div class="tabs-wrapper">
+        <div class="tabs-wrapper" id="tabsHeader">
             <button class="tab-btn active" onclick="openStrategy(event, 'Strat12')">🌟 12. 綜合排行</button>
             <button class="tab-btn" onclick="openStrategy(event, 'Strat20')">🚀 20. 外資越買越多出量</button>
             <button class="tab-btn" onclick="openStrategy(event, 'Strat19')">⚡ 19. 營收暴增1.5倍</button>
@@ -1826,6 +1831,9 @@ def main():
                 document.querySelectorAll(".tab-btn").forEach(el => el.classList.remove("active"));
                 document.getElementById(strategyName).style.display = "block";
                 evt.currentTarget.classList.add("active");
+                
+                // 點擊後平滑滾動至容器中央
+                evt.currentTarget.scrollIntoView({{ behavior: 'smooth', inline: 'center', block: 'nearest' }});
             }}
 
             function setupFavorites() {{
@@ -2239,7 +2247,7 @@ def main():
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(html_content)
 
-    print(f"\n✅ 策略 18 已更新、策略 19 與 20 已成功加入！網頁已生成: {html_filename}")
+    print(f"\n✅ 策略 20 已新增，頂部選單已改為單列水平滑動！網頁已生成: {html_filename}")
     if os.environ.get("GITHUB_ACTIONS") != "true":
         webbrowser.open(f"file:///{file_path}")
 

@@ -2,6 +2,8 @@ import datetime
 import time
 import random
 import os
+import itertools
+import numpy as np
 import webbrowser
 import pandas as pd
 import requests
@@ -398,162 +400,92 @@ def get_foreign_holdings() -> pd.DataFrame:
 
     return pd.DataFrame(columns=["股票代號", "外資持股比例(%)", "發行總張數"])
 
-# ==========================
-# 月營收（已修正）
-# ==========================
-def _find_key(keys, *must):
-    for k in keys:
-        if all(m in k for m in must):
-            return k
-    return None
-
-def _prev_month(y, m):
-    m -= 1
-    if m == 0:
-        m, y = 12, y - 1
-    return y, m
-
-def _save_month_cache(y, m, df, val_col):
-    cache_file = os.path.join(CACHE_DIR, f"rev_{y}_{m:02d}.csv")
-    if is_valid_cache(cache_file):
-        return
-    out = df[["股票代號", val_col]].rename(columns={val_col: f"營收_{y}_{m:02d}"})
-    out = out[out[f"營收_{y}_{m:02d}"] > 0].drop_duplicates(subset=["股票代號"])
-    if not out.empty:
-        out.to_csv(cache_file, index=False, encoding="utf-8-sig")
-
-def fetch_revenue_openapi() -> pd.DataFrame:
-    """上市+上櫃 最新月營收彙總 (含當月、上月營收)，欄位: 股票代號, ym(民國年月), cur, prev"""
-    sources = [
-        ("上市", "https://openapi.twse.com.tw/v1/opendata/t187ap05_L"),
-        ("上櫃", "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap05_O"),
-    ]
-    rows = []
-    for name, url in sources:
-        data = safe_request_json(url, max_retries=3, headers=OPENAPI_HEADERS)
-        if not isinstance(data, list) or not data or not isinstance(data[0], dict):
-            WARNINGS.append(f"{name}月營收 OpenAPI 抓取失敗")
-            continue
-        keys = list(data[0].keys())
-        k_code = _find_key(keys, "公司代號")
-        k_ym = _find_key(keys, "資料年月")
-        k_cur = _find_key(keys, "當月營收")
-        k_prev = _find_key(keys, "上月營收")
-        if not all([k_code, k_ym, k_cur, k_prev]):
-            WARNINGS.append(f"{name}月營收 欄位無法辨識: {keys[:8]}")
-            continue
-        for item in data:
-            code = str(item.get(k_code, "")).strip()
-            if len(code) == 4 and code.isdigit():
-                try:
-                    ym = int(str(item.get(k_ym, "")).strip())
-                except Exception:
-                    continue
-                rows.append({"股票代號": code, "ym": ym,
-                             "cur": to_float(item.get(k_cur)),
-                             "prev": to_float(item.get(k_prev))})
-    return pd.DataFrame(rows)
-
 def fetch_month_revenue(year_roc: int, month: int) -> pd.DataFrame:
-    col_name = f"營收_{year_roc}_{month:02d}"
     cache_file = os.path.join(CACHE_DIR, f"rev_{year_roc}_{month:02d}.csv")
     df_cached = safe_read_csv(cache_file, dtype={"股票代號": str})
     if not df_cached.empty:
         return df_cached
 
-    headers = {"User-Agent": TWSE_HEADERS["User-Agent"]}
-    rows = []
-    for host in ["https://mopsov.twse.com.tw", "https://mops.twse.com.tw"]:
-        for typ in ["sii", "otc"]:
-            url = f"{host}/nas/t21/{typ}/t21sc03_{year_roc}_{month}_0.html"
-            try:
-                resp = requests.get(url, headers=headers, timeout=8)
-                if resp.status_code != 200:
-                    continue
-                resp.encoding = "big5"
-                for t in pd.read_html(resp.text):
-                    if t.shape[1] < 3:
-                        continue
-                    for r_idx in range(len(t)):
-                        vals = [str(x).strip() for x in t.iloc[r_idx].values]
-                        code = vals[0]
-                        if code.isdigit() and len(code) == 4:
-                            rows.append({"股票代號": code, col_name: to_float(vals[2])})
-            except Exception:
-                continue
-        if rows:
-            break  # 這個 host 有抓到就不用試下一個
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    dfs = []
+    for skey in [0, 1]:
+        url = f"https://mops.twse.com.tw/nas/t21/skey{skey}/t21sc03_{year_roc}_{month}_0.html"
+        try:
+            resp = requests.get(url, headers=headers, timeout=5)
+            if resp.status_code == 200:
+                resp.encoding = 'big5'
+                tables = pd.read_html(resp.text)
+                for t in tables:
+                    if t.shape[1] >= 11 and "公司代號" in str(t.values):
+                        for r_idx in range(len(t)):
+                            row_vals = [str(x).strip() for x in t.iloc[r_idx].values]
+                            code = row_vals[0]
+                            if code.isdigit() and len(code) == 4:
+                                rev = to_float(row_vals[2])
+                                dfs.append({"股票代號": code, f"營收_{year_roc}_{month:02d}": rev})
+        except Exception:
+            pass
 
-    if rows:
-        df_res = pd.DataFrame(rows).drop_duplicates(subset=["股票代號"])
+    if dfs:
+        df_res = pd.DataFrame(dfs).drop_duplicates(subset=["股票代號"])
         df_res.to_csv(cache_file, index=False, encoding="utf-8-sig")
         return df_res
-    return pd.DataFrame(columns=["股票代號", col_name])
+    return pd.DataFrame(columns=["股票代號", f"營收_{year_roc}_{month:02d}"])
 
 def get_revenue_analysis() -> pd.DataFrame:
-    empty = pd.DataFrame(columns=["股票代號", "營收連3月月增", "最新營收月增率(%)", "營收爆發1.5倍"])
+    today = datetime.date.today()
+    cur_year = today.year - 1911
+    cur_month = today.month
 
-    # 1) 先用 OpenAPI 判定最新月份，並把「當月」「上月」寫入快取
-    df_api = fetch_revenue_openapi()
-    if not df_api.empty:
-        ym = int(df_api["ym"].mode().iloc[0])
-        y0, m0_ = divmod(ym, 100)
-        _save_month_cache(y0, m0_, df_api, "cur")
-        py, pm = _prev_month(y0, m0_)
-        _save_month_cache(py, pm, df_api, "prev")
-    else:
-        today = datetime.date.today()
-        y0, m0_ = today.year - 1911, today.month
-        for _ in range(1 if today.day >= 12 else 2):
-            y0, m0_ = _prev_month(y0, m0_)
+    months = []
+    start_offset = 1 if today.day >= 12 else 2
+    for i in range(start_offset, start_offset + 4):
+        m = cur_month - i
+        y = cur_year
+        while m <= 0:
+            m += 12
+            y -= 1
+        months.append((y, m))
 
-    # 2) 最新 → 最舊 共 4 個月
-    months = [(y0, m0_)]
-    for _ in range(3):
-        months.append(_prev_month(*months[-1]))
-    print(f"📊 營收檢查月份: {[f'{y}/{m:02d}' for y, m in months]}")
-
-    df_merged = pd.DataFrame(columns=["股票代號"])
-    avail = []
+    print(f"📊 檢查近 4 個月營收區間: {[f'{y}/{m:02d}' for y, m in months]}...")
+    df_merged = None
+    rev_cols = []
     for y, m in months:
         df_m = fetch_month_revenue(y, m)
-        col = f"營收_{y}_{m:02d}"
-        ok = (not df_m.empty) and (col in df_m.columns)
-        avail.append(ok)
-        if ok:
-            df_merged = df_m if df_merged.empty else pd.merge(df_merged, df_m, on="股票代號", how="outer")
+        col_name = f"營收_{y}_{m:02d}"
+        rev_cols.append(col_name)
+        if df_merged is None:
+            df_merged = df_m
         else:
-            WARNINGS.append(f"營收 {y}/{m:02d} 取得失敗")
+            if not df_m.empty:
+                df_merged = pd.merge(df_merged, df_m, on="股票代號", how="outer")
 
-    cols = [f"營收_{y}_{m:02d}" for y, m in months]  # [最新, 前1, 前2, 前3]
-    if df_merged.empty or not avail[0] or not avail[1]:
-        print("⚠️ 營收資料不足(至少需要最新與上月)，營收策略將無結果")
-        return empty
+    if df_merged is None or len(rev_cols) < 4:
+        return pd.DataFrame(columns=["股票代號", "營收連3月月增", "最新營收月增率(%)", "營收爆發1.5倍"])
 
-    for c in cols:
+    rev_cols_sorted = list(reversed(rev_cols))
+    m3, m2, m1, m0 = rev_cols_sorted[0], rev_cols_sorted[1], rev_cols_sorted[2], rev_cols_sorted[3]
+
+    for c in [m3, m2, m1, m0]:
         if c not in df_merged.columns:
             df_merged[c] = 0.0
         df_merged[c] = pd.to_numeric(df_merged[c], errors="coerce").fillna(0)
-    r0, r1, r2, r3 = cols
 
-    # 3) 依可用月份降級判斷「連續月增」
-    if avail[2] and avail[3]:
-        growth = (df_merged[r0] > df_merged[r1]) & (df_merged[r1] > df_merged[r2]) & \
-                 (df_merged[r2] > df_merged[r3]) & (df_merged[r3] > 0)
-    elif avail[2]:
-        WARNINGS.append("營收僅取得 3 個月，『連3月月增』降級為『連2月月增』")
-        growth = (df_merged[r0] > df_merged[r1]) & (df_merged[r1] > df_merged[r2]) & (df_merged[r2] > 0)
-    else:
-        WARNINGS.append("營收僅取得 2 個月，『連3月月增』降級為『當月大於上月』")
-        growth = (df_merged[r0] > df_merged[r1]) & (df_merged[r1] > 0)
+    cond_growth_3m = (
+        (df_merged[m0] > df_merged[m1]) &
+        (df_merged[m1] > df_merged[m2]) &
+        (df_merged[m2] > df_merged[m3]) &
+        (df_merged[m3] > 0)
+    )
 
-    df_merged["最新營收月增率(%)"] = (((df_merged[r0] - df_merged[r1]) /
-                                  df_merged[r1].replace(0, float("nan"))) * 100).round(2).fillna(0.0)
-    df_merged["營收連3月月增"] = growth.astype(bool)
-    df_merged["營收爆發1.5倍"] = ((df_merged[r1] > 0) & (df_merged[r0] >= df_merged[r1] * 1.5)).astype(bool)
+    df_merged['最新營收月增率(%)'] = (((df_merged[m0] - df_merged[m1]) / df_merged[m1].replace(0, float('nan'))) * 100).round(2).fillna(0.0)
+    cond_surge_1_5x = (df_merged[m1] > 0) & (df_merged[m0] >= df_merged[m1] * 1.5)
 
-    print(f"   ✅ 營收連增: {int(df_merged['營收連3月月增'].sum())} 檔 | "
-          f"營收爆發1.5倍: {int(df_merged['營收爆發1.5倍'].sum())} 檔")
+    df_merged['營收連3月月增'] = cond_growth_3m
+    df_merged['營收爆發1.5倍'] = cond_surge_1_5x
+
     return df_merged[["股票代號", "營收連3月月增", "最新營收月增率(%)", "營收爆發1.5倍"]]
 
 def get_last_n_trading_days_data(n_market=155, n_inst=60):
@@ -752,9 +684,9 @@ def main():
 
     if not df_revenue.empty:
         df_merge = pd.merge(df_merge, df_revenue, on='股票代號', how='left')
-        df_merge['營收連3月月增'] = df_merge['營收連3月月增'].fillna(False).astype(bool)
+        df_merge['營收連3月月增'] = df_merge['營收連3月月增'].fillna(False)
         df_merge['最新營收月增率(%)'] = df_merge['最新營收月增率(%)'].fillna(0.0)
-        df_merge['營收爆發1.5倍'] = df_merge['營收爆發1.5倍'].fillna(False).astype(bool)
+        df_merge['營收爆發1.5倍'] = df_merge['營收爆發1.5倍'].fillna(False)
     else:
         df_merge['營收連3月月增'] = False
         df_merge['最新營收月增率(%)'] = 0.0
@@ -1436,27 +1368,35 @@ def main():
     cols24 = base_cols + ["千張大戶比例(%)", "增量倍數"] + chip_cols
     html_tb24 = apply_color_formatting(res24[cols24]).to_html(index=False, classes="styled-table sortable-table", escape=False)
 
-    # 策略 25: 倚強科模式複製（大戶高鎖碼 + 短均線發散向上 + 出量突破）
+    # ==========================
+    # 【全新】策略 25: 倚強科模式複製（大戶高鎖碼 + 短均線發散向上 + 出量突破）
+    # ==========================
     def cond25_fn(k):
         c_k = df_merge[f'收盤價_{k}']
+        c_prev = df_merge[f'收盤價_{k+1}']
         c_10ago = df_merge[f'收盤價_{k+10}'] if f'收盤價_{k+10}' in df_merge else df_merge[f'收盤價_{k+9}']
         ret_10d = ((c_k - c_10ago) / c_10ago) * 100
+        # 1. 大戶極致鎖碼 (千張大戶 >= 60%)
         whale_locked = df_merge['千張大戶比例(%)'] >= 60.0
+        # 2. 均線發散：收盤價 > 5MA > 20MA
         ma5_k = df_merge[[f'收盤價_{k+j}' for j in range(5)]].mean(axis=1)
         ma20_k = df_merge[[f'收盤價_{k+j}' for j in range(20)]].mean(axis=1)
         bullish_ma = (c_k > ma5_k) & (ma5_k > ma20_k)
+        # 3. 剛剛啟動出量：今日成交量 >= 昨日成交量 * 1.5
         vol_surge = df_merge[f'成交量_{k}'] >= df_merge[f'成交量_{k+1}'] * 1.5
+        # 4. 處於起漲波段（近10日漲幅介於 3% ~ 25%）
         launch_zone = (ret_10d >= 3.0) & (ret_10d <= 25.0)
+        # 5. 法人無賣壓（外資與投信近2日無大賣）
         inst_safe = (df_merge[f'外資_{k}'] >= 0) | (df_merge[f'投信_{k}'] >= 0)
         return whale_locked & bullish_ma & vol_surge & launch_zone & inst_safe
 
     res25_hits = eval_rolling_condition(cond25_fn)
     cond25 = (
-        (df_merge['千張大戶比例(%)'] >= 60.0) &
-        (df_merge['收盤價_0'] > df_merge['5MA']) & (df_merge['5MA'] > df_merge['20MA']) &
-        (df_merge['成交量_0'] >= df_merge['成交量_1'] * 1.5) &
-        (df_merge['近10日漲幅(%)'] >= 3.0) & (df_merge['近10日漲幅(%)'] <= 25.0) &
-        ((df_merge['外資_0'] >= 0) | (df_merge['投信_0'] >= 0))
+        (df_merge['千張大戶比例(%)'] >= 60.0) & # 大戶鎖碼
+        (df_merge['收盤價_0'] > df_merge['5MA']) & (df_merge['5MA'] > df_merge['20MA']) & # 均線發散多頭
+        (df_merge['成交量_0'] >= df_merge['成交量_1'] * 1.5) & # 出量 1.5 倍
+        (df_merge['近10日漲幅(%)'] >= 3.0) & (df_merge['近10日漲幅(%)'] <= 25.0) & # 剛起漲
+        ((df_merge['外資_0'] >= 0) | (df_merge['投信_0'] >= 0)) # 法人有買盤或無賣壓
     )
     res25 = df_merge[cond25].copy()
     res25['近7日符合次數'] = res25_hits[cond25]
@@ -1537,6 +1477,223 @@ def main():
     df_strat21_show["隔日平均報酬(%)"] = df_strat21_show["隔日平均報酬(%)"].apply(color_pct)
     html_tb21 = df_strat21_show.to_html(index=False, classes="styled-table backtest-table sortable-table", escape=False)
 
+    # ============================================================
+    # 【全新】策略 26：30天高勝率策略組合挖掘器
+    # ============================================================
+    # 重要：18/19/24/25 含「目前快照」的營收/大戶資料，若直接拿來做歷史日回測
+    # 會造成資料穿越（look-ahead bias），因此策略 26 的組合挖掘先排除這四個策略。
+    # 策略 26 延續策略 21 的定義：每次訊號後，以「隔天收盤漲跌」作為勝負。
+    strat26_candidates = [
+        ("1.跳空不補", cond1_fn),
+        ("2.連續墊高", cond2_fn),
+        ("3.量增法人買", cond3_fn),
+        ("4.創20日新高", cond4_fn),
+        ("5.旱地拔蔥", cond5_fn),
+        ("6.創五日高", cond6_fn),
+        ("7.20日高不賣", cond7_fn),
+        ("8.連日墊高", cond8_fn),
+        ("9.多重濾網", cond9_fn),
+        ("10.上櫃強勢", cond10_fn),
+        ("11.上櫃紅K", cond11_fn),
+        ("13.逼近60日高", cond13_fn),
+        ("14.創20日高不賣", cond14_fn),
+        ("15.壓縮突破60日", cond15_fn),
+        ("16.最大量高點", cond16_fn),
+        ("17.創120日高", cond17_fn),
+        ("20.外資越買越多出量", cond20_fn),
+        ("22.高勝率基因複合", cond22_fn),
+        ("23.突破10日最大量", cond23_fn),
+    ]
+
+    STRAT26_MIN_WIN_RATE = 80.0
+    STRAT26_MIN_SAMPLES = 10
+    print(f"🧠 正在挖掘策略 26：過去 30 個交易日的雙策略組合（勝率 > {STRAT26_MIN_WIN_RATE:.0f}%，樣本 >= {STRAT26_MIN_SAMPLES}）...")
+
+    # 先把每個策略在 T-1 ~ T-30 的歷史訊號與隔日報酬快取起來，
+    # 避免組合計算時重複呼叫 cond_fn(k)。
+    strat26_signal_cache = {name: {} for name, _ in strat26_candidates}
+    strat26_return_cache = {}
+
+    for k in range(1, 31):
+        valid_next = (
+            df_merge[f"收盤價_{k}"].notna() &
+            df_merge[f"收盤價_{k}"].gt(0) &
+            df_merge[f"收盤價_{k-1}"].notna() &
+            df_merge[f"收盤價_{k-1}"].gt(0)
+        )
+        next_ret = pd.Series(np.nan, index=df_merge.index, dtype=float)
+        next_ret.loc[valid_next] = (
+            (df_merge.loc[valid_next, f"收盤價_{k-1}"] -
+             df_merge.loc[valid_next, f"收盤價_{k}"]) /
+            df_merge.loc[valid_next, f"收盤價_{k}"] * 100.0
+        )
+        strat26_return_cache[k] = next_ret.to_numpy(dtype=float)
+
+        for st_name, st_fn in strat26_candidates:
+            try:
+                sig = st_fn(k)
+                if sig is None:
+                    sig = pd.Series(False, index=df_merge.index)
+                sig = sig.reindex(df_merge.index).fillna(False).astype(bool)
+                strat26_signal_cache[st_name][k] = sig.to_numpy(dtype=bool)
+            except Exception:
+                strat26_signal_cache[st_name][k] = np.zeros(len(df_merge), dtype=bool)
+
+    strat26_combo_records = []
+    strat26_names = [x[0] for x in strat26_candidates]
+
+    # 採「兩個策略同時命中」作為組合單位。
+    # 條件越多不一定越好，故先用樣本數與歷史勝率控制過擬合，再用平均報酬排序。
+    for st_a, st_b in itertools.combinations(strat26_names, 2):
+        total = 0
+        up = 0
+        returns = []
+
+        for k in range(1, 31):
+            sig_a = strat26_signal_cache[st_a].get(k)
+            sig_b = strat26_signal_cache[st_b].get(k)
+            if sig_a is None or sig_b is None:
+                continue
+
+            combo_mask = sig_a & sig_b
+            if not combo_mask.any():
+                continue
+
+            r = strat26_return_cache[k]
+            valid = combo_mask & np.isfinite(r)
+            if not valid.any():
+                continue
+
+            combo_returns = r[valid]
+            total += int(combo_returns.size)
+            up += int((combo_returns > 0).sum())
+            returns.extend(combo_returns.tolist())
+
+        if total < STRAT26_MIN_SAMPLES:
+            continue
+
+        win_rate = (up / total) * 100.0
+        if win_rate > STRAT26_MIN_WIN_RATE:
+            avg_ret = float(np.mean(returns)) if returns else 0.0
+            strat26_combo_records.append({
+                "策略組合": f"{st_a} × {st_b}",
+                "策略A": st_a,
+                "策略B": st_b,
+                "30日隔日上漲率(%)": round(win_rate, 2),
+                "30日平均隔日報酬(%)": round(avg_ret, 2),
+                "樣本數": total,
+                "上漲次數": up,
+                "下跌次數": total - up,
+            })
+
+    df_strat26_combo = pd.DataFrame(strat26_combo_records)
+
+    if not df_strat26_combo.empty:
+        # 優先歷史勝率，其次樣本數，再其次平均報酬。
+        df_strat26_combo = df_strat26_combo.sort_values(
+            by=["30日隔日上漲率(%)", "樣本數", "30日平均隔日報酬(%)"],
+            ascending=[False, False, False]
+        ).reset_index(drop=True)
+        df_strat26_combo.insert(0, "排名", np.arange(1, len(df_strat26_combo) + 1))
+
+        df_strat26_combo_show = df_strat26_combo[
+            ["排名", "策略組合", "30日隔日上漲率(%)", "30日平均隔日報酬(%)",
+             "樣本數", "上漲次數", "下跌次數"]
+        ].copy()
+        df_strat26_combo_show["30日隔日上漲率(%)"] = df_strat26_combo_show["30日隔日上漲率(%)"].apply(
+            lambda x: f"<b style='color:#dc2626;'>{x:.2f}%</b>"
+        )
+        df_strat26_combo_show["30日平均隔日報酬(%)"] = df_strat26_combo_show["30日平均隔日報酬(%)"].apply(color_pct)
+        html_tb26_combo = df_strat26_combo_show.to_html(
+            index=False, classes="styled-table backtest-table sortable-table", escape=False
+        )
+    else:
+        html_tb26_combo = (
+            "<p style='text-align:center;padding:14px;'>"
+            f"過去30日沒有找到「勝率 &gt; {STRAT26_MIN_WIN_RATE:.0f}% 且樣本 >= {STRAT26_MIN_SAMPLES}」的雙策略組合。"
+            "</p>"
+        )
+
+    # ------------------------------------------------------------
+    # 策略 26：套用符合條件的高勝率組合到「最新交易日」選股。
+    # 一檔股票若同時命中多個高勝率組合，保留所有組合並以最佳組合勝率排序。
+    # ------------------------------------------------------------
+    res26 = pd.DataFrame()
+
+    if not df_strat26_combo.empty:
+        current_signals = {}
+        for st_name, st_fn in strat26_candidates:
+            try:
+                sig0 = st_fn(0)
+                if sig0 is None:
+                    sig0 = pd.Series(False, index=df_merge.index)
+                current_signals[st_name] = sig0.reindex(df_merge.index).fillna(False).astype(bool)
+            except Exception:
+                current_signals[st_name] = pd.Series(False, index=df_merge.index)
+
+        stock_combo_map = {}
+        for _, combo in df_strat26_combo.iterrows():
+            st_a = combo["策略A"]
+            st_b = combo["策略B"]
+            cur_mask = current_signals[st_a] & current_signals[st_b]
+            for idx in df_merge.index[cur_mask]:
+                code = str(df_merge.at[idx, "股票代號"])
+                stock_combo_map.setdefault(code, []).append({
+                    "組合": combo["策略組合"],
+                    "勝率": float(combo["30日隔日上漲率(%)"]),
+                    "平均報酬": float(combo["30日平均隔日報酬(%)"]),
+                    "樣本": int(combo["樣本數"])
+                })
+
+        rows26 = []
+        for code, combo_list in stock_combo_map.items():
+            combo_list = sorted(
+                combo_list,
+                key=lambda x: (x["勝率"], x["樣本"], x["平均報酬"]),
+                reverse=True
+            )
+            best = combo_list[0]
+            base = df_merge[df_merge["股票代號"] == code].iloc[0].copy()
+            base["最佳組合勝率(%)"] = best["勝率"]
+            base["最佳組合樣本數"] = best["樣本"]
+            base["命中高勝率組合數"] = len(combo_list)
+            base["最佳組合"] = best["組合"]
+            base["30日組合平均報酬(%)"] = best["平均報酬"]
+            base["全部命中組合"] = " | ".join(
+                f"{x['組合']}（{x['勝率']:.1f}%）" for x in combo_list[:8]
+            )
+            rows26.append(base)
+
+        if rows26:
+            res26 = pd.DataFrame(rows26)
+            res26 = res26.sort_values(
+                by=["最佳組合勝率(%)", "命中高勝率組合數", "最佳組合樣本數", "最新漲幅(%)"],
+                ascending=[False, False, False, False]
+            ).reset_index(drop=True)
+
+            res26 = res26.rename(columns={
+                "收盤價_1": f"{d1_s} 收盤",
+                "收盤價_0": f"{d0_s} 收盤",
+                "成交量_0": f"{d0_s} 量(張)"
+            })
+            cols26 = [
+                "⭐", "市場", "標的",
+                "最佳組合勝率(%)", "最佳組合樣本數", "命中高勝率組合數",
+                "最佳組合", "全部命中組合", "30日組合平均報酬(%)",
+                "近10日漲幅(%)", f"{d1_s} 收盤", f"{d0_s} 收盤",
+                "最新漲幅(%)", f"{d0_s} 量(張)"
+            ] + chip_cols
+
+            # 避免欄位因資料異常而中斷整頁產生。
+            cols26 = [c for c in cols26 if c in res26.columns]
+            html_tb26 = apply_color_formatting(
+                res26[cols26]
+            ).to_html(index=False, classes="styled-table sortable-table", escape=False)
+        else:
+            html_tb26 = "<p style='text-align:center;padding:14px;'>目前最新日沒有股票同時命中任何一組高勝率策略。</p>"
+    else:
+        html_tb26 = "<p style='text-align:center;padding:14px;'>目前沒有可套用的高勝率策略組合。</p>"
+
     # 策略 12: 綜合排行
     st_lists = [
         ("1.跳空", res1), ("2.墊高", res2), ("3.量增法人", res3),
@@ -1581,11 +1738,11 @@ def main():
         warning_html = f"""
         <details class='warning-details'>
             <summary class='warning-summary'>
-                <span>⚠ 系統提示：共有 <b>{warn_count}</b> 則資料缺漏/降級訊息（點擊展開/收合）</span>
+                <span>⚠ 系統提示：共有 <b>{warn_count}</b> 個交易日資料缺少（點擊展開/收合）</span>
                 <span class='toggle-arrow'>▼</span>
             </summary>
             <div class='warning-body'>
-                <p>下列項目可能為假日休市、連線超時或資料降級處理：</p>
+                <p>下列日期可能為假日休市或連線超時：</p>
                 <ul>{warn_items_html}</ul>
             </div>
         </details>
@@ -1942,6 +2099,7 @@ def main():
 
         <div class="tabs-wrapper" id="tabsHeader">
             <button class="tab-btn active" onclick="openStrategy(event, 'Strat12')">🌟 12. 綜合排行</button>
+            <button class="tab-btn" onclick="openStrategy(event, 'Strat26')">🧠 26. 30天高勝率組合</button>
             <button class="tab-btn" onclick="openStrategy(event, 'Strat25')">💎 25. 倚強科模式複製</button>
             <button class="tab-btn" onclick="openStrategy(event, 'Strat24')">👑 24. 飆股基因起漲</button>
             <button class="tab-btn" onclick="openStrategy(event, 'Strat23')">🔥 23. 突破10日最大量</button>
@@ -1979,6 +2137,21 @@ def main():
                 <div class="table-container">{html_tb12}</div>
             </div>
 
+            <div id="Strat26" class="tabcontent">
+                <div class="info-box">
+                    <p>🧠 <b>策略 26：30天高勝率策略組合</b> 將可做純歷史回測的策略兩兩配對，回測最近 30 個交易日「策略同時命中 ➜ 隔日收盤上漲」的勝率；只保留 <b>勝率 &gt; 80%</b> 且至少 <b>{STRAT26_MIN_SAMPLES} 個樣本</b> 的組合，再把這些高勝率組合套用到最新交易日選股。為避免資料穿越，18/19/24/25 的目前快照條件不納入組合挖掘。</p>
+                    <div class="count-badge">✅ 高勝率組合：<span id="count_Strat26_combo">{len(df_strat26_combo)}</span> 組　｜　最新日選股：<span id="count_Strat26">{len(res26)}</span> 檔</div>
+                </div>
+                <div class="info-box">
+                    <p><b>高勝率組合排行</b></p>
+                    <div class="table-container">{html_tb26_combo}</div>
+                </div>
+                <div class="info-box">
+                    <p><b>最新日對應選股</b> 同一檔股票若命中多個高勝率組合，會保留多組證據，並以最佳組合勝率、命中組合數與樣本數排序。</p>
+                </div>
+                <div class="table-container">{html_tb26}</div>
+            </div>
+
             <div id="Strat25" class="tabcontent">
                 <div class="info-box">
                     <p>🎯 <b>策略 25：倚強科模式複製</b> 複製倚強科(3219)大漲前夕特徵：1. 千張大戶比例 &ge; 60% (高鎖碼) | 2. 均線多頭發散 (收盤 > 5MA > 20MA) | 3. 今日出量 &ge; 1.5倍 | 4. 剛起漲區間 (近10日漲幅 3%~25%) | 5. 法人無賣壓。</p>
@@ -2013,7 +2186,7 @@ def main():
 
             <div id="Strat21" class="tabcontent">
                 <div class="info-box">
-                    <p>🎯 <b>策略 21：30天歷史回測</b> 統計各策略在過去 30 個交易日內選出的個股，在「隔天收盤為紅盤」的歷史機率與平均漲跌幅度。（營收策略 18/19 使用最新營收回推歷史，含未來函數，僅供參考）</p>
+                    <p>🎯 <b>策略 21：30天歷史回測</b> 統計各策略在過去 30 個交易日內選出的個股，在「隔天收盤為紅盤」的歷史機率與平均漲跌幅度。</p>
                     <div class="count-badge">📊 依上漲勝率排行</div>
                 </div>
                 <div class="table-container">{html_tb21}</div>
@@ -2037,7 +2210,7 @@ def main():
 
             <div id="Strat18" class="tabcontent">
                 <div class="info-box">
-                    <p>🎯 <b>選股邏輯：</b> 1. 連續三個月營收月增 (MoM，資料不足時自動降級) | 2. 今日第一天出量 (&ge; 1.2倍且昨未爆量) | 3. 股價收紅。法人買賣超於表內呈現。</p>
+                    <p>🎯 <b>選股邏輯：</b> 1. 連續三個月營收月增 (MoM) | 2. 今日第一天出量 (&ge; 1.2倍且昨未爆量) | 3. 股價收紅。法人買賣超於表內呈現。</p>
                     <div class="count-badge">符合：<span id="count_Strat18">{len(res18)}</span> 檔</div>
                 </div>
                 <div class="table-container">{html_tb18}</div>
@@ -2634,7 +2807,7 @@ def main():
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(html_content)
 
-    print(f"\n✅ 選股完成！檔案: {html_filename}")
+    print(f"\n✅ 策略 25（倚強科模式複製）已成功加入！檔案: {html_filename}")
     if os.environ.get("GITHUB_ACTIONS") != "true":
         webbrowser.open(f"file:///{file_path}")
 

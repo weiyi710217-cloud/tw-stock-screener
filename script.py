@@ -398,92 +398,162 @@ def get_foreign_holdings() -> pd.DataFrame:
 
     return pd.DataFrame(columns=["股票代號", "外資持股比例(%)", "發行總張數"])
 
+# ==========================
+# 月營收（已修正）
+# ==========================
+def _find_key(keys, *must):
+    for k in keys:
+        if all(m in k for m in must):
+            return k
+    return None
+
+def _prev_month(y, m):
+    m -= 1
+    if m == 0:
+        m, y = 12, y - 1
+    return y, m
+
+def _save_month_cache(y, m, df, val_col):
+    cache_file = os.path.join(CACHE_DIR, f"rev_{y}_{m:02d}.csv")
+    if is_valid_cache(cache_file):
+        return
+    out = df[["股票代號", val_col]].rename(columns={val_col: f"營收_{y}_{m:02d}"})
+    out = out[out[f"營收_{y}_{m:02d}"] > 0].drop_duplicates(subset=["股票代號"])
+    if not out.empty:
+        out.to_csv(cache_file, index=False, encoding="utf-8-sig")
+
+def fetch_revenue_openapi() -> pd.DataFrame:
+    """上市+上櫃 最新月營收彙總 (含當月、上月營收)，欄位: 股票代號, ym(民國年月), cur, prev"""
+    sources = [
+        ("上市", "https://openapi.twse.com.tw/v1/opendata/t187ap05_L"),
+        ("上櫃", "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap05_O"),
+    ]
+    rows = []
+    for name, url in sources:
+        data = safe_request_json(url, max_retries=3, headers=OPENAPI_HEADERS)
+        if not isinstance(data, list) or not data or not isinstance(data[0], dict):
+            WARNINGS.append(f"{name}月營收 OpenAPI 抓取失敗")
+            continue
+        keys = list(data[0].keys())
+        k_code = _find_key(keys, "公司代號")
+        k_ym = _find_key(keys, "資料年月")
+        k_cur = _find_key(keys, "當月營收")
+        k_prev = _find_key(keys, "上月營收")
+        if not all([k_code, k_ym, k_cur, k_prev]):
+            WARNINGS.append(f"{name}月營收 欄位無法辨識: {keys[:8]}")
+            continue
+        for item in data:
+            code = str(item.get(k_code, "")).strip()
+            if len(code) == 4 and code.isdigit():
+                try:
+                    ym = int(str(item.get(k_ym, "")).strip())
+                except Exception:
+                    continue
+                rows.append({"股票代號": code, "ym": ym,
+                             "cur": to_float(item.get(k_cur)),
+                             "prev": to_float(item.get(k_prev))})
+    return pd.DataFrame(rows)
+
 def fetch_month_revenue(year_roc: int, month: int) -> pd.DataFrame:
+    col_name = f"營收_{year_roc}_{month:02d}"
     cache_file = os.path.join(CACHE_DIR, f"rev_{year_roc}_{month:02d}.csv")
     df_cached = safe_read_csv(cache_file, dtype={"股票代號": str})
     if not df_cached.empty:
         return df_cached
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-    dfs = []
-    for skey in [0, 1]:
-        url = f"https://mops.twse.com.tw/nas/t21/skey{skey}/t21sc03_{year_roc}_{month}_0.html"
-        try:
-            resp = requests.get(url, headers=headers, timeout=5)
-            if resp.status_code == 200:
-                resp.encoding = 'big5'
-                tables = pd.read_html(resp.text)
-                for t in tables:
-                    if t.shape[1] >= 11 and "公司代號" in str(t.values):
-                        for r_idx in range(len(t)):
-                            row_vals = [str(x).strip() for x in t.iloc[r_idx].values]
-                            code = row_vals[0]
-                            if code.isdigit() and len(code) == 4:
-                                rev = to_float(row_vals[2])
-                                dfs.append({"股票代號": code, f"營收_{year_roc}_{month:02d}": rev})
-        except Exception:
-            pass
+    headers = {"User-Agent": TWSE_HEADERS["User-Agent"]}
+    rows = []
+    for host in ["https://mopsov.twse.com.tw", "https://mops.twse.com.tw"]:
+        for typ in ["sii", "otc"]:
+            url = f"{host}/nas/t21/{typ}/t21sc03_{year_roc}_{month}_0.html"
+            try:
+                resp = requests.get(url, headers=headers, timeout=8)
+                if resp.status_code != 200:
+                    continue
+                resp.encoding = "big5"
+                for t in pd.read_html(resp.text):
+                    if t.shape[1] < 3:
+                        continue
+                    for r_idx in range(len(t)):
+                        vals = [str(x).strip() for x in t.iloc[r_idx].values]
+                        code = vals[0]
+                        if code.isdigit() and len(code) == 4:
+                            rows.append({"股票代號": code, col_name: to_float(vals[2])})
+            except Exception:
+                continue
+        if rows:
+            break  # 這個 host 有抓到就不用試下一個
 
-    if dfs:
-        df_res = pd.DataFrame(dfs).drop_duplicates(subset=["股票代號"])
+    if rows:
+        df_res = pd.DataFrame(rows).drop_duplicates(subset=["股票代號"])
         df_res.to_csv(cache_file, index=False, encoding="utf-8-sig")
         return df_res
-    return pd.DataFrame(columns=["股票代號", f"營收_{year_roc}_{month:02d}"])
+    return pd.DataFrame(columns=["股票代號", col_name])
 
 def get_revenue_analysis() -> pd.DataFrame:
-    today = datetime.date.today()
-    cur_year = today.year - 1911
-    cur_month = today.month
+    empty = pd.DataFrame(columns=["股票代號", "營收連3月月增", "最新營收月增率(%)", "營收爆發1.5倍"])
 
-    months = []
-    start_offset = 1 if today.day >= 12 else 2
-    for i in range(start_offset, start_offset + 4):
-        m = cur_month - i
-        y = cur_year
-        while m <= 0:
-            m += 12
-            y -= 1
-        months.append((y, m))
+    # 1) 先用 OpenAPI 判定最新月份，並把「當月」「上月」寫入快取
+    df_api = fetch_revenue_openapi()
+    if not df_api.empty:
+        ym = int(df_api["ym"].mode().iloc[0])
+        y0, m0_ = divmod(ym, 100)
+        _save_month_cache(y0, m0_, df_api, "cur")
+        py, pm = _prev_month(y0, m0_)
+        _save_month_cache(py, pm, df_api, "prev")
+    else:
+        today = datetime.date.today()
+        y0, m0_ = today.year - 1911, today.month
+        for _ in range(1 if today.day >= 12 else 2):
+            y0, m0_ = _prev_month(y0, m0_)
 
-    print(f"📊 檢查近 4 個月營收區間: {[f'{y}/{m:02d}' for y, m in months]}...")
-    df_merged = None
-    rev_cols = []
+    # 2) 最新 → 最舊 共 4 個月
+    months = [(y0, m0_)]
+    for _ in range(3):
+        months.append(_prev_month(*months[-1]))
+    print(f"📊 營收檢查月份: {[f'{y}/{m:02d}' for y, m in months]}")
+
+    df_merged = pd.DataFrame(columns=["股票代號"])
+    avail = []
     for y, m in months:
         df_m = fetch_month_revenue(y, m)
-        col_name = f"營收_{y}_{m:02d}"
-        rev_cols.append(col_name)
-        if df_merged is None:
-            df_merged = df_m
+        col = f"營收_{y}_{m:02d}"
+        ok = (not df_m.empty) and (col in df_m.columns)
+        avail.append(ok)
+        if ok:
+            df_merged = df_m if df_merged.empty else pd.merge(df_merged, df_m, on="股票代號", how="outer")
         else:
-            if not df_m.empty:
-                df_merged = pd.merge(df_merged, df_m, on="股票代號", how="outer")
+            WARNINGS.append(f"營收 {y}/{m:02d} 取得失敗")
 
-    if df_merged is None or len(rev_cols) < 4:
-        return pd.DataFrame(columns=["股票代號", "營收連3月月增", "最新營收月增率(%)", "營收爆發1.5倍"])
+    cols = [f"營收_{y}_{m:02d}" for y, m in months]  # [最新, 前1, 前2, 前3]
+    if df_merged.empty or not avail[0] or not avail[1]:
+        print("⚠️ 營收資料不足(至少需要最新與上月)，營收策略將無結果")
+        return empty
 
-    rev_cols_sorted = list(reversed(rev_cols))
-    m3, m2, m1, m0 = rev_cols_sorted[0], rev_cols_sorted[1], rev_cols_sorted[2], rev_cols_sorted[3]
-
-    for c in [m3, m2, m1, m0]:
+    for c in cols:
         if c not in df_merged.columns:
             df_merged[c] = 0.0
         df_merged[c] = pd.to_numeric(df_merged[c], errors="coerce").fillna(0)
+    r0, r1, r2, r3 = cols
 
-    cond_growth_3m = (
-        (df_merged[m0] > df_merged[m1]) &
-        (df_merged[m1] > df_merged[m2]) &
-        (df_merged[m2] > df_merged[m3]) &
-        (df_merged[m3] > 0)
-    )
+    # 3) 依可用月份降級判斷「連續月增」
+    if avail[2] and avail[3]:
+        growth = (df_merged[r0] > df_merged[r1]) & (df_merged[r1] > df_merged[r2]) & \
+                 (df_merged[r2] > df_merged[r3]) & (df_merged[r3] > 0)
+    elif avail[2]:
+        WARNINGS.append("營收僅取得 3 個月，『連3月月增』降級為『連2月月增』")
+        growth = (df_merged[r0] > df_merged[r1]) & (df_merged[r1] > df_merged[r2]) & (df_merged[r2] > 0)
+    else:
+        WARNINGS.append("營收僅取得 2 個月，『連3月月增』降級為『當月大於上月』")
+        growth = (df_merged[r0] > df_merged[r1]) & (df_merged[r1] > 0)
 
-    df_merged['最新營收月增率(%)'] = (((df_merged[m0] - df_merged[m1]) / df_merged[m1].replace(0, float('nan'))) * 100).round(2).fillna(0.0)
-    cond_surge_1_5x = (df_merged[m1] > 0) & (df_merged[m0] >= df_merged[m1] * 1.5)
+    df_merged["最新營收月增率(%)"] = (((df_merged[r0] - df_merged[r1]) /
+                                  df_merged[r1].replace(0, float("nan"))) * 100).round(2).fillna(0.0)
+    df_merged["營收連3月月增"] = growth.astype(bool)
+    df_merged["營收爆發1.5倍"] = ((df_merged[r1] > 0) & (df_merged[r0] >= df_merged[r1] * 1.5)).astype(bool)
 
-    df_merged['營收連3月月增'] = cond_growth_3m
-    df_merged['營收爆發1.5倍'] = cond_surge_1_5x
-
+    print(f"   ✅ 營收連增: {int(df_merged['營收連3月月增'].sum())} 檔 | "
+          f"營收爆發1.5倍: {int(df_merged['營收爆發1.5倍'].sum())} 檔")
     return df_merged[["股票代號", "營收連3月月增", "最新營收月增率(%)", "營收爆發1.5倍"]]
 
 def get_last_n_trading_days_data(n_market=155, n_inst=60):
@@ -682,9 +752,9 @@ def main():
 
     if not df_revenue.empty:
         df_merge = pd.merge(df_merge, df_revenue, on='股票代號', how='left')
-        df_merge['營收連3月月增'] = df_merge['營收連3月月增'].fillna(False)
+        df_merge['營收連3月月增'] = df_merge['營收連3月月增'].fillna(False).astype(bool)
         df_merge['最新營收月增率(%)'] = df_merge['最新營收月增率(%)'].fillna(0.0)
-        df_merge['營收爆發1.5倍'] = df_merge['營收爆發1.5倍'].fillna(False)
+        df_merge['營收爆發1.5倍'] = df_merge['營收爆發1.5倍'].fillna(False).astype(bool)
     else:
         df_merge['營收連3月月增'] = False
         df_merge['最新營收月增率(%)'] = 0.0
@@ -1366,35 +1436,27 @@ def main():
     cols24 = base_cols + ["千張大戶比例(%)", "增量倍數"] + chip_cols
     html_tb24 = apply_color_formatting(res24[cols24]).to_html(index=False, classes="styled-table sortable-table", escape=False)
 
-    # ==========================
-    # 【全新】策略 25: 倚強科模式複製（大戶高鎖碼 + 短均線發散向上 + 出量突破）
-    # ==========================
+    # 策略 25: 倚強科模式複製（大戶高鎖碼 + 短均線發散向上 + 出量突破）
     def cond25_fn(k):
         c_k = df_merge[f'收盤價_{k}']
-        c_prev = df_merge[f'收盤價_{k+1}']
         c_10ago = df_merge[f'收盤價_{k+10}'] if f'收盤價_{k+10}' in df_merge else df_merge[f'收盤價_{k+9}']
         ret_10d = ((c_k - c_10ago) / c_10ago) * 100
-        # 1. 大戶極致鎖碼 (千張大戶 >= 60%)
         whale_locked = df_merge['千張大戶比例(%)'] >= 60.0
-        # 2. 均線發散：收盤價 > 5MA > 20MA
         ma5_k = df_merge[[f'收盤價_{k+j}' for j in range(5)]].mean(axis=1)
         ma20_k = df_merge[[f'收盤價_{k+j}' for j in range(20)]].mean(axis=1)
         bullish_ma = (c_k > ma5_k) & (ma5_k > ma20_k)
-        # 3. 剛剛啟動出量：今日成交量 >= 昨日成交量 * 1.5
         vol_surge = df_merge[f'成交量_{k}'] >= df_merge[f'成交量_{k+1}'] * 1.5
-        # 4. 處於起漲波段（近10日漲幅介於 3% ~ 25%）
         launch_zone = (ret_10d >= 3.0) & (ret_10d <= 25.0)
-        # 5. 法人無賣壓（外資與投信近2日無大賣）
         inst_safe = (df_merge[f'外資_{k}'] >= 0) | (df_merge[f'投信_{k}'] >= 0)
         return whale_locked & bullish_ma & vol_surge & launch_zone & inst_safe
 
     res25_hits = eval_rolling_condition(cond25_fn)
     cond25 = (
-        (df_merge['千張大戶比例(%)'] >= 60.0) & # 大戶鎖碼
-        (df_merge['收盤價_0'] > df_merge['5MA']) & (df_merge['5MA'] > df_merge['20MA']) & # 均線發散多頭
-        (df_merge['成交量_0'] >= df_merge['成交量_1'] * 1.5) & # 出量 1.5 倍
-        (df_merge['近10日漲幅(%)'] >= 3.0) & (df_merge['近10日漲幅(%)'] <= 25.0) & # 剛起漲
-        ((df_merge['外資_0'] >= 0) | (df_merge['投信_0'] >= 0)) # 法人有買盤或無賣壓
+        (df_merge['千張大戶比例(%)'] >= 60.0) &
+        (df_merge['收盤價_0'] > df_merge['5MA']) & (df_merge['5MA'] > df_merge['20MA']) &
+        (df_merge['成交量_0'] >= df_merge['成交量_1'] * 1.5) &
+        (df_merge['近10日漲幅(%)'] >= 3.0) & (df_merge['近10日漲幅(%)'] <= 25.0) &
+        ((df_merge['外資_0'] >= 0) | (df_merge['投信_0'] >= 0))
     )
     res25 = df_merge[cond25].copy()
     res25['近7日符合次數'] = res25_hits[cond25]
@@ -1519,11 +1581,11 @@ def main():
         warning_html = f"""
         <details class='warning-details'>
             <summary class='warning-summary'>
-                <span>⚠ 系統提示：共有 <b>{warn_count}</b> 個交易日資料缺少（點擊展開/收合）</span>
+                <span>⚠ 系統提示：共有 <b>{warn_count}</b> 則資料缺漏/降級訊息（點擊展開/收合）</span>
                 <span class='toggle-arrow'>▼</span>
             </summary>
             <div class='warning-body'>
-                <p>下列日期可能為假日休市或連線超時：</p>
+                <p>下列項目可能為假日休市、連線超時或資料降級處理：</p>
                 <ul>{warn_items_html}</ul>
             </div>
         </details>
@@ -1951,7 +2013,7 @@ def main():
 
             <div id="Strat21" class="tabcontent">
                 <div class="info-box">
-                    <p>🎯 <b>策略 21：30天歷史回測</b> 統計各策略在過去 30 個交易日內選出的個股，在「隔天收盤為紅盤」的歷史機率與平均漲跌幅度。</p>
+                    <p>🎯 <b>策略 21：30天歷史回測</b> 統計各策略在過去 30 個交易日內選出的個股，在「隔天收盤為紅盤」的歷史機率與平均漲跌幅度。（營收策略 18/19 使用最新營收回推歷史，含未來函數，僅供參考）</p>
                     <div class="count-badge">📊 依上漲勝率排行</div>
                 </div>
                 <div class="table-container">{html_tb21}</div>
@@ -1975,7 +2037,7 @@ def main():
 
             <div id="Strat18" class="tabcontent">
                 <div class="info-box">
-                    <p>🎯 <b>選股邏輯：</b> 1. 連續三個月營收月增 (MoM) | 2. 今日第一天出量 (&ge; 1.2倍且昨未爆量) | 3. 股價收紅。法人買賣超於表內呈現。</p>
+                    <p>🎯 <b>選股邏輯：</b> 1. 連續三個月營收月增 (MoM，資料不足時自動降級) | 2. 今日第一天出量 (&ge; 1.2倍且昨未爆量) | 3. 股價收紅。法人買賣超於表內呈現。</p>
                     <div class="count-badge">符合：<span id="count_Strat18">{len(res18)}</span> 檔</div>
                 </div>
                 <div class="table-container">{html_tb18}</div>
@@ -2572,7 +2634,7 @@ def main():
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(html_content)
 
-    print(f"\n✅ 策略 25（倚強科模式複製）已成功加入！檔案: {html_filename}")
+    print(f"\n✅ 選股完成！檔案: {html_filename}")
     if os.environ.get("GITHUB_ACTIONS") != "true":
         webbrowser.open(f"file:///{file_path}")
 

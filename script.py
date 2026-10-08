@@ -61,7 +61,7 @@ def safe_request_json(url: str, max_retries: int = 2, headers=TWSE_HEADERS):
                     return {}
         except Exception:
             pass
-        time.sleep(1)
+        time.sleep(0.5)
     return {}
 
 def tpex_date_params(date_str: str):
@@ -75,7 +75,7 @@ def tpex_fetch_tables(url: str, date_str: str, roc_date: str, tag: str):
         try:
             resp = requests.get(url, headers=TPEX_HEADERS, timeout=6)
             if resp.status_code != 200:
-                time.sleep(1)
+                time.sleep(0.5)
                 continue
             data = resp.json()
             if str(data.get("stat", "")).lower() != "ok":
@@ -93,7 +93,7 @@ def tpex_fetch_tables(url: str, date_str: str, roc_date: str, tag: str):
                 return good
         except Exception:
             pass
-        time.sleep(1)
+        time.sleep(0.5)
     return []
 
 def fetch_twse_daily(date_str: str) -> pd.DataFrame:
@@ -170,7 +170,7 @@ def get_market_data(date_str: str) -> pd.DataFrame:
     df_twse = fetch_twse_daily(date_str)
     if df_twse.empty:
         return pd.DataFrame()
-    time.sleep(0.5)
+    time.sleep(0.3)
     df_tpex = fetch_tpex_daily(date_str)
 
     df_all = pd.concat([df_twse, df_tpex], ignore_index=True)
@@ -254,7 +254,7 @@ def get_inst_data(date_str: str) -> pd.DataFrame:
 
     print(f"🌐 [{date_str}] 抓取【上市+上櫃法人籌碼】資料...")
     df_twse = fetch_twse_inst(date_str)
-    time.sleep(0.5)
+    time.sleep(0.3)
     df_tpex = fetch_tpex_inst(date_str)
 
     valid_dfs = [df for df in [df_twse, df_tpex] if not df.empty]
@@ -281,7 +281,7 @@ def get_tdcc_data() -> pd.DataFrame:
     url = "https://smart.tdcc.com.tw/opendata/getOD.ashx?id=1-5"
     for attempt in range(2):
         try:
-            resp = requests.get(url, headers=TWSE_HEADERS, timeout=10)
+            resp = requests.get(url, headers=TWSE_HEADERS, timeout=8)
             if resp.status_code == 200:
                 lines = resp.text.strip().split('\n')
                 rows = []
@@ -303,7 +303,7 @@ def get_tdcc_data() -> pd.DataFrame:
                 return df_tdcc
         except Exception:
             pass
-        time.sleep(1)
+        time.sleep(0.5)
     WARNINGS.append("千張大戶資料 抓取失敗")
     return pd.DataFrame(columns=["股票代號", "千張大戶比例(%)"])
 
@@ -489,7 +489,7 @@ def get_last_n_trading_days_data(n_market=155, n_inst=60):
             else:
                 valid_inst.append((date_str, pd.DataFrame()))
         else:
-            time.sleep(0.2)
+            time.sleep(0.1)
     return valid_dfs, valid_inst
 
 def format_stock_cell(row):
@@ -1233,6 +1233,40 @@ def main():
     cols20 = base_cols + ["最新日外資(張)", "前1日外資(張)", "前2日外資(張)", "增量倍數"] + chip_cols
     html_tb20 = apply_color_formatting(res20[cols20]).to_html(index=False, classes="styled-table sortable-table", escape=False)
 
+    # ==========================
+    # 【全新】策略 22: 高勝率基因精選 (創五日高 + 連續墊高 + 跳空量增 + 雙法人連三日無賣)
+    # ==========================
+    def cond22_fn(k):
+        close_5 = [f'收盤價_{k+j}' for j in range(1, 6)]
+        max_5 = df_merge[close_5].max(axis=1)
+        c_high5 = df_merge[f'收盤價_{k}'] > max_5
+        gap_up = (df_merge[f'最低價_{k}'] >= df_merge[f'收盤價_{k+1}']) & (df_merge[f'開盤價_{k}'] > df_merge[f'收盤價_{k+1}'])
+        step_up = (df_merge[f'收盤價_{k}'] > df_merge[f'收盤價_{k+1}']) & (df_merge[f'收盤價_{k+1}'] > df_merge[f'收盤價_{k+2}'])
+        vol_up = df_merge[f'成交量_{k}'] >= df_merge[f'成交量_{k+1}'] * 1.2
+        hold_3 = (df_merge[f'外資_{k}'] >= 0) & (df_merge[f'投信_{k}'] >= 0) & \
+                 (df_merge[f'外資_{k+1}'] >= 0) & (df_merge[f'投信_{k+1}'] >= 0) & \
+                 (df_merge[f'外資_{k+2}'] >= 0) & (df_merge[f'投信_{k+2}'] >= 0)
+        return c_high5 & gap_up & step_up & vol_up & hold_3
+
+    res22_hits = eval_rolling_condition(cond22_fn)
+    cond22 = (
+        (df_merge['收盤價_0'] > df_merge['5日最高收盤']) &
+        (df_merge['最低價_0'] >= df_merge['收盤價_1']) &
+        (df_merge['開盤價_0'] > df_merge['收盤價_1']) &
+        (df_merge['收盤價_0'] > df_merge['收盤價_1']) & (df_merge['收盤價_1'] > df_merge['收盤價_2']) &
+        (df_merge['成交量_0'] >= df_merge['成交量_1'] * 1.2) &
+        (df_merge['外資_0'] >= 0) & (df_merge['投信_0'] >= 0) &
+        (df_merge['外資_1'] >= 0) & (df_merge['投信_1'] >= 0) &
+        (df_merge['外資_2'] >= 0) & (df_merge['投信_2'] >= 0)
+    )
+    res22 = df_merge[cond22].copy()
+    res22['近7日符合次數'] = res22_hits[cond22]
+    res22["增量倍數"] = (res22["成交量_0"] / res22["成交量_1"]).round(2)
+    res22 = res22.sort_values(by=["最新漲幅(%)", "增量倍數"], ascending=[False, False])
+    res22 = res22.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
+    cols22 = base_cols + ["增量倍數"] + chip_cols
+    html_tb22 = apply_color_formatting(res22[cols22]).to_html(index=False, classes="styled-table sortable-table", escape=False)
+
     # 策略 21 回測
     print("🔬 正在執行過去 30 天各策略隔日勝率回測計算...")
     strategy_eval_funcs = [
@@ -1255,6 +1289,7 @@ def main():
         ("18.營收連三增啟動", cond18_fn),
         ("19.營收暴增1.5倍", cond19_fn),
         ("20.外資越買越多出量", cond20_fn),
+        ("22.高勝率基因複合", cond22_fn),
     ]
 
     backtest_records = []
@@ -1298,7 +1333,6 @@ def main():
     df_strat21_show = df_strat21.copy()
     df_strat21_show["隔天上漲率(%)"] = df_strat21_show["隔天上漲率(%)"].apply(lambda x: f"<b style='color:#dc2626;'>{x:.2f}%</b>" if x >= 50 else f"<span style='color:#16a34a;'>{x:.2f}%</span>")
     df_strat21_show["隔日平均報酬(%)"] = df_strat21_show["隔日平均報酬(%)"].apply(color_pct)
-    # 策略 21 使用專屬 backtest-table 樣式，避免 sticky 欄位錯位重疊
     html_tb21 = df_strat21_show.to_html(index=False, classes="styled-table backtest-table sortable-table", escape=False)
 
     # 策略 12: 綜合排行
@@ -1310,7 +1344,7 @@ def main():
         ("14.創20日高+法人七日不賣", res14), ("15.壓縮突破60日高", res15_strict),
         ("16.突破最大量高點", res16), ("17.創120日新高", res17),
         ("18.營收連三增啟動", res18), ("19.營收暴增1.5倍", res19),
-        ("20.外資越買越多出量", res20)
+        ("20.外資越買越多出量", res20), ("22.高勝率基因複合", res22)
     ]
     
     hit_counts = {}
@@ -1455,7 +1489,6 @@ def main():
                 margin: 0 auto;
             }}
 
-            /* 可折疊警告樣式 */
             .warning-details {{
                 background-color: #fff1f2;
                 border: 1px solid #fecdd3;
@@ -1705,6 +1738,7 @@ def main():
 
         <div class="tabs-wrapper" id="tabsHeader">
             <button class="tab-btn active" onclick="openStrategy(event, 'Strat12')">🌟 12. 綜合排行</button>
+            <button class="tab-btn" onclick="openStrategy(event, 'Strat22')">🎯 22. 高勝率基因精選</button>
             <button class="tab-btn" onclick="openStrategy(event, 'Strat21')">📊 21. 隔日勝率統計</button>
             <button class="tab-btn" onclick="openStrategy(event, 'Strat20')">🚀 20. 外資越買越多出量</button>
             <button class="tab-btn" onclick="openStrategy(event, 'Strat19')">⚡ 19. 營收暴增1.5倍</button>
@@ -1732,10 +1766,18 @@ def main():
 
             <div id="Strat12" class="tabcontent" style="display: block;">
                 <div class="info-box">
-                    <p>🎯 <b>選股邏輯：</b> 統計所有策略(1~11, 13~20)預設條件下，選中最多次的股票排序。</p>
+                    <p>🎯 <b>選股邏輯：</b> 統計所有策略預設條件下，選中最多次的股票排序。</p>
                     <div class="count-badge">✅ 前 50 名強勢標的</div>
                 </div>
                 <div class="table-container">{html_tb12}</div>
+            </div>
+
+            <div id="Strat22" class="tabcontent">
+                <div class="info-box">
+                    <p>🎯 <b>策略 22：高勝率基因精選</b> 融合回測第 1 名「創五日高+跳空」、第 2 名「創120日高」、第 3 名「連續墊高」之精華。具備創高、跳空不補、連二紅且外資投信連三日無賣出。</p>
+                    <div class="count-badge">符合：<span id="count_Strat22">{len(res22)}</span> 檔</div>
+                </div>
+                <div class="table-container">{html_tb22}</div>
             </div>
 
             <div id="Strat21" class="tabcontent">
@@ -2011,10 +2053,10 @@ def main():
             }}
 
             function enableTableSorting() {{
-                document.querySelectorAll('.styled-table th').forEach(header => {{
+                document.querySelectorAll('.styled-table th').forEach(header => {
                     if (header.cellIndex === 0 && header.innerText.includes("⭐")) return;
 
-                    header.addEventListener('click', function() {{
+                    header.addEventListener('click', function() {
                         const table = this.closest('table');
                         const tbody = table.querySelector('tbody');
                         const isAscending = this.classList.contains('th-sort-asc');
@@ -2022,45 +2064,45 @@ def main():
 
                         table.querySelectorAll('th').forEach(th => th.classList.remove('th-sort-asc', 'th-sort-desc'));
 
-                        if (isAscending) {{
+                        if (isAscending) {
                             this.classList.add('th-sort-desc');
                             sortTbody(tbody, colIndex, false);
-                        }} else {{
+                        } else {
                             this.classList.add('th-sort-asc');
                             sortTbody(tbody, colIndex, true);
-                        }}
-                    }});
-                }});
+                        }
+                    });
+                });
             }}
 
-            function updateVisibleCount(tabId, visibleCount) {{
+            function updateVisibleCount(tabId, visibleCount) {
                 let elem = document.getElementById("count_" + tabId);
                 if(elem) elem.innerText = visibleCount;
-            }}
+            }
 
-            function filterTable(tabId, maxValStr) {{
+            function filterTable(tabId, maxValStr) {
                 let maxVal = parseFloat(maxValStr);
                 let table = document.getElementById(tabId).querySelector("table");
                 if (!table) return;
 
                 let headers = table.querySelectorAll("thead th");
                 let colIdxs = [];
-                headers.forEach((th, idx) => {{ if (th.innerText.includes("增量")) colIdxs.push(idx); }});
+                headers.forEach((th, idx) => { if (th.innerText.includes("增量")) colIdxs.push(idx); });
 
                 let count = 0;
-                table.querySelectorAll("tbody tr").forEach(row => {{
+                table.querySelectorAll("tbody tr").forEach(row => {
                     let show = true;
                     let cells = row.querySelectorAll("td");
-                    for(let i = 0; i < colIdxs.length; i++) {{
-                        if (parseFloat(cells[colIdxs[i]].innerText) > maxVal) {{ show = false; break; }}
-                    }}
+                    for(let i = 0; i < colIdxs.length; i++) {
+                        if (parseFloat(cells[colIdxs[i]].innerText) > maxVal) { show = false; break; }
+                    }
                     row.style.display = show ? "" : "none";
                     if(show) count++;
-                }});
+                });
                 updateVisibleCount(tabId, count);
-            }}
+            }
 
-            function filterStrat1() {{
+            function filterStrat1() {
                 let maxVol = parseFloat(document.getElementById('sel_Strat1_vol').value);
                 let minGap = parseInt(document.getElementById('sel_Strat1_gap').value);
                 let minVolDays = parseInt(document.getElementById('sel_Strat1_vol_days').value);
@@ -2070,25 +2112,25 @@ def main():
 
                 let headers = table.querySelectorAll("thead th");
                 let idxVol = -1, idxGap = -1, idxVolDays = -1;
-                headers.forEach((th, i) => {{
+                headers.forEach((th, i) => {
                     if (th.innerText.includes("增量倍數")) idxVol = i;
                     if (th.innerText.includes("跳空天數")) idxGap = i;
                     if (th.innerText.includes("量增天數")) idxVolDays = i;
-                }});
+                });
 
                 let count = 0;
-                table.querySelectorAll("tbody tr").forEach(row => {{
+                table.querySelectorAll("tbody tr").forEach(row => {
                     let cells = row.querySelectorAll("td");
                     let show = (parseFloat(cells[idxVol].innerText) <= maxVol) &&
                                (parseInt(cells[idxGap].innerText) >= minGap) &&
                                (parseInt(cells[idxVolDays].innerText) >= minVolDays);
                     row.style.display = show ? "" : "none";
                     if(show) count++;
-                }});
+                });
                 updateVisibleCount('Strat1', count);
-            }}
+            }
 
-            function filterStrat2() {{
+            function filterStrat2() {
                 let maxVol = parseFloat(document.getElementById('sel_Strat2_vol').value);
                 let minStep = parseInt(document.getElementById('sel_Strat2_step').value);
                 let minVolDays = parseInt(document.getElementById('sel_Strat2_voldays').value);
@@ -2099,15 +2141,15 @@ def main():
 
                 let headers = table.querySelectorAll("thead th");
                 let idxVol = -1, idxStep = -1, idxVolDays = -1, idxFBuy = -1;
-                headers.forEach((th, i) => {{
+                headers.forEach((th, i) => {
                     if (th.innerText.includes("增量倍數")) idxVol = i;
                     if (th.innerText.includes("墊高天數")) idxStep = i;
                     if (th.innerText.includes("量增天數")) idxVolDays = i;
                     if (th.innerText.includes("外資連買天數")) idxFBuy = i;
-                }});
+                });
 
                 let count = 0;
-                table.querySelectorAll("tbody tr").forEach(row => {{
+                table.querySelectorAll("tbody tr").forEach(row => {
                     let cells = row.querySelectorAll("td");
                     let show = (parseFloat(cells[idxVol].innerText) <= maxVol) &&
                                (parseInt(cells[idxStep].innerText) >= minStep) &&
@@ -2115,11 +2157,11 @@ def main():
                                (parseInt(cells[idxFBuy].innerText) >= minFBuy);
                     row.style.display = show ? "" : "none";
                     if(show) count++;
-                }});
+                });
                 updateVisibleCount('Strat2', count);
-            }}
+            }
 
-            function filterStrat3() {{
+            function filterStrat3() {
                 let maxVol = parseFloat(document.getElementById('sel_Strat3_vol').value);
                 let minFbuy = parseInt(document.getElementById('sel_Strat3_fbuy').value);
                 let minUpDays = parseInt(document.getElementById('sel_Strat3_updays').value);
@@ -2129,25 +2171,25 @@ def main():
 
                 let headers = table.querySelectorAll("thead th");
                 let idxVol = -1, idxFbuy = -1, idxUpDays = -1;
-                headers.forEach((th, i) => {{
+                headers.forEach((th, i) => {
                     if (th.innerText.includes("增量倍數")) idxVol = i;
                     if (th.innerText.includes("外資連買天數")) idxFbuy = i;
                     if (th.innerText.includes("連漲天數")) idxUpDays = i;
-                }});
+                });
 
                 let count = 0;
-                table.querySelectorAll("tbody tr").forEach(row => {{
+                table.querySelectorAll("tbody tr").forEach(row => {
                     let cells = row.querySelectorAll("td");
                     let show = (parseFloat(cells[idxVol].innerText) <= maxVol) &&
                                (parseInt(cells[idxFbuy].innerText) >= minFbuy) &&
                                (parseInt(cells[idxUpDays].innerText) >= minUpDays);
                     row.style.display = show ? "" : "none";
                     if(show) count++;
-                }});
+                });
                 updateVisibleCount('Strat3', count);
-            }}
+            }
 
-            function filterStrat14() {{
+            function filterStrat14() {
                 let maxVol = parseFloat(document.getElementById('sel_Strat14_vol').value);
                 let minFbuy = parseInt(document.getElementById('sel_Strat14_fbuy').value);
                 let minUpDays = parseInt(document.getElementById('sel_Strat14_updays').value);
@@ -2157,25 +2199,25 @@ def main():
 
                 let headers = table.querySelectorAll("thead th");
                 let idxVol = -1, idxFbuy = -1, idxUpDays = -1;
-                headers.forEach((th, i) => {{
+                headers.forEach((th, i) => {
                     if (th.innerText.includes("增量倍數")) idxVol = i;
                     if (th.innerText.includes("外資連買天數")) idxFbuy = i;
                     if (th.innerText.includes("連漲天數")) idxUpDays = i;
-                }});
+                });
 
                 let count = 0;
-                table.querySelectorAll("tbody tr").forEach(row => {{
+                table.querySelectorAll("tbody tr").forEach(row => {
                     let cells = row.querySelectorAll("td");
                     let show = (parseFloat(cells[idxVol].innerText) <= maxVol) &&
                                (parseInt(cells[idxFbuy].innerText) >= minFbuy) &&
                                (parseInt(cells[idxUpDays].innerText) >= minUpDays);
                     row.style.display = show ? "" : "none";
                     if(show) count++;
-                }});
+                });
                 updateVisibleCount('Strat14', count);
-            }}
+            }
 
-            function filterStrat15() {{
+            function filterStrat15() {
                 let minVol = parseFloat(document.getElementById('sel_Strat15_vol').value);
                 let maxRange = parseFloat(document.getElementById('sel_Strat15_range').value);
                 let checkMaxVol = document.getElementById('sel_Strat15_maxvol').value;
@@ -2186,15 +2228,15 @@ def main():
 
                 let headers = table.querySelectorAll("thead th");
                 let idxVol = -1, idxAmp20 = -1, idxAmp40 = -1, idxAmp60 = -1;
-                headers.forEach((th, i) => {{
+                headers.forEach((th, i) => {
                     if (th.innerText.includes("增量倍數")) idxVol = i;
                     if (th.innerText.includes("20日震幅")) idxAmp20 = i;
                     if (th.innerText.includes("40日震幅")) idxAmp40 = i;
                     if (th.innerText.includes("60日震幅")) idxAmp60 = i;
-                }});
+                });
 
                 let count = 0;
-                table.querySelectorAll("tbody tr").forEach(row => {{
+                table.querySelectorAll("tbody tr").forEach(row => {
                     let cells = row.querySelectorAll("td");
                     let isMaxVol = row.getAttribute('data-is-max-vol') === "true"; 
                     let targetAmpIdx = period === "20" ? idxAmp20 : (period === "40" ? idxAmp40 : idxAmp60);
@@ -2205,31 +2247,31 @@ def main():
                                
                     row.style.display = show ? "" : "none";
                     if(show) count++;
-                }});
+                });
                 updateVisibleCount('Strat15', count);
-            }}
+            }
             
-            function filterStrat16() {{
+            function filterStrat16() {
                 let minVol = parseFloat(document.getElementById('sel_Strat16_vol').value);
                 let table = document.getElementById('Strat16').querySelector("table");
                 if (!table) return;
 
                 let headers = table.querySelectorAll("thead th");
                 let idxVol = -1;
-                headers.forEach((th, i) => {{ if (th.innerText.includes("增量倍數")) idxVol = i; }});
+                headers.forEach((th, i) => { if (th.innerText.includes("增量倍數")) idxVol = i; });
 
                 let count = 0;
-                table.querySelectorAll("tbody tr").forEach(row => {{
+                table.querySelectorAll("tbody tr").forEach(row => {
                     let cells = row.querySelectorAll("td");
                     let show = true;
                     if (minVol > 0 && parseFloat(cells[idxVol].innerText) < minVol) show = false;
                     row.style.display = show ? "" : "none";
                     if(show) count++;
-                }});
+                });
                 updateVisibleCount('Strat16', count);
-            }}
+            }
 
-            function filterStrat9() {{
+            function filterStrat9() {
                 let pctMin = parseFloat(document.getElementById('sel9_pct').value);
                 let tdccMin = parseFloat(document.getElementById('sel9_tdcc').value);
                 let highCond = document.getElementById('sel9_high').value;
@@ -2239,20 +2281,20 @@ def main():
 
                 let headers = table.querySelectorAll("thead th");
                 let idxPct = -1, idxTdcc = -1, idx5 = -1, idx20 = -1;
-                headers.forEach((th, i) => {{
+                headers.forEach((th, i) => {
                     if (th.innerText.includes("最新漲幅")) idxPct = i;
                     if (th.innerText.includes("千張大戶")) idxTdcc = i;
                     if (th.innerText.includes("創5日高")) idx5 = i;
                     if (th.innerText.includes("創20日高")) idx20 = i;
-                }});
+                });
 
                 let count = 0;
-                table.querySelectorAll("tbody tr").forEach(row => {{
+                table.querySelectorAll("tbody tr").forEach(row => {
                     let cells = row.querySelectorAll("td");
                     let is5High = cells[idx5].innerText.includes("是");
                     let is20High = cells[idx20].innerText.includes("是");
 
-                    let valPct = parseFloat(cells[idxPct].innerText.replace(/,/g, '').replace(/%/g, '').replace(/\\+/g, ''));
+                    let valPct = parseFloat(cells[idxPct].innerText.replace(/,/g, '').replace(/%/g, '').replace(/\+/g, ''));
                     let valTdcc = parseFloat(cells[idxTdcc].innerText.replace(/,/g, ''));
 
                     let show = (valPct >= pctMin) && (valTdcc >= tdccMin);
@@ -2262,68 +2304,68 @@ def main():
 
                     row.style.display = show ? "" : "none";
                     if(show) count++;
-                }});
+                });
                 updateVisibleCount('Strat9', count);
-            }}
+            }
 
-            function filterStrat10() {{
+            function filterStrat10() {
                 let minPct = parseFloat(document.getElementById('sel_Strat10_pct').value);
                 let table = document.getElementById('Strat10').querySelector("table");
                 if (!table) return;
 
                 let headers = table.querySelectorAll("thead th");
                 let idxPct = -1;
-                headers.forEach((th, i) => {{ if (th.innerText.includes("最新漲幅")) idxPct = i; }});
+                headers.forEach((th, i) => { if (th.innerText.includes("最新漲幅")) idxPct = i; });
 
                 let count = 0;
-                table.querySelectorAll("tbody tr").forEach(row => {{
-                    let valPct = parseFloat(row.querySelectorAll("td")[idxPct].innerText.replace(/,/g, '').replace(/%/g, '').replace(/\\+/g, ''));
+                table.querySelectorAll("tbody tr").forEach(row => {
+                    let valPct = parseFloat(row.querySelectorAll("td")[idxPct].innerText.replace(/,/g, '').replace(/%/g, '').replace(/\+/g, ''));
                     let show = valPct >= minPct;
                     row.style.display = show ? "" : "none";
                     if(show) count++;
-                }});
+                });
                 updateVisibleCount('Strat10', count);
-            }}
+            }
 
-            function filterStrat11() {{
+            function filterStrat11() {
                 let minK = parseFloat(document.getElementById('sel_Strat11_k').value);
                 let table = document.getElementById('Strat11').querySelector("table");
                 if (!table) return;
 
                 let headers = table.querySelectorAll("thead th");
                 let idxK = -1;
-                headers.forEach((th, i) => {{ if (th.innerText.includes("實體K漲幅")) idxK = i; }});
+                headers.forEach((th, i) => { if (th.innerText.includes("實體K漲幅")) idxK = i; });
 
                 let count = 0;
-                table.querySelectorAll("tbody tr").forEach(row => {{
-                    let valK = parseFloat(row.querySelectorAll("td")[idxK].innerText.replace(/,/g, '').replace(/%/g, '').replace(/\\+/g, ''));
+                table.querySelectorAll("tbody tr").forEach(row => {
+                    let valK = parseFloat(row.querySelectorAll("td")[idxK].innerText.replace(/,/g, '').replace(/%/g, '').replace(/\+/g, ''));
                     let show = valK >= minK;
                     row.style.display = show ? "" : "none";
                     if(show) count++;
-                }});
+                });
                 updateVisibleCount('Strat11', count);
-            }}
+            }
             
-            function filterStrat13() {{
+            function filterStrat13() {
                 let minDist = parseFloat(document.getElementById('sel_Strat13_dist').value);
                 let table = document.getElementById('Strat13').querySelector("table");
                 if (!table) return;
 
                 let headers = table.querySelectorAll("thead th");
                 let idxDist = -1;
-                headers.forEach((th, i) => {{ if (th.innerText.includes("距離60日高點(%)")) idxDist = i; }});
+                headers.forEach((th, i) => { if (th.innerText.includes("距離60日高點(%)")) idxDist = i; });
 
                 let count = 0;
-                table.querySelectorAll("tbody tr").forEach(row => {{
+                table.querySelectorAll("tbody tr").forEach(row => {
                     let valDist = parseFloat(row.querySelectorAll("td")[idxDist].innerText.replace(/,/g, '').replace(/%/g, ''));
                     let show = valDist >= minDist;
                     row.style.display = show ? "" : "none";
                     if(show) count++;
-                }});
+                });
                 updateVisibleCount('Strat13', count);
-            }}
+            }
 
-            window.addEventListener('DOMContentLoaded', () => {{
+            window.addEventListener('DOMContentLoaded', () => {
                 setupFavorites();
                 enableTableSorting();
                 
@@ -2342,7 +2384,7 @@ def main():
                 filterStrat10();
                 filterStrat11();
                 filterStrat13();
-            }});
+            });
             
             setTimeout(filterStrat15, 100);
         </script>
@@ -2361,7 +2403,7 @@ def main():
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(html_content)
 
-    print(f"\n✅ 修正完成！警告區塊已收合、策略 21 表格已修正。檔案已生成: {html_filename}")
+    print(f"\n✅ 策略 22（高勝率基因複合選股）已生成！檔案: {html_filename}")
     if os.environ.get("GITHUB_ACTIONS") != "true":
         webbrowser.open(f"file:///{file_path}")
 

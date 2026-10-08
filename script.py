@@ -587,6 +587,20 @@ def main():
             
     df_merge['最大量日最高價'] = df_merge.apply(get_max_vol_high, axis=1)
 
+    def get_10d_max_vol_high(row):
+        try:
+            vols = []
+            for i in range(1, 11):
+                v = float(row.get(f'成交量_{i}', -1))
+                if pd.notna(v): vols.append((v, i))
+            if not vols: return 0.0
+            max_vol_idx = max(vols, key=lambda item: item[0])[1]
+            return float(row.get(f'最高價_{max_vol_idx}', 0.0))
+        except Exception:
+            return 0.0
+
+    df_merge['近10日最大量日最高價'] = df_merge.apply(get_10d_max_vol_high, axis=1)
+
     df_merge['最新漲幅(%)'] = ((df_merge['收盤價_0'] - df_merge['收盤價_1']) / df_merge['收盤價_1'] * 100).round(2)
     df_merge['前一日漲幅(%)'] = ((df_merge['收盤價_1'] - df_merge['收盤價_2']) / df_merge['收盤價_2'] * 100).round(2)
     
@@ -1233,9 +1247,7 @@ def main():
     cols20 = base_cols + ["最新日外資(張)", "前1日外資(張)", "前2日外資(張)", "增量倍數"] + chip_cols
     html_tb20 = apply_color_formatting(res20[cols20]).to_html(index=False, classes="styled-table sortable-table", escape=False)
 
-    # ==========================
-    # 【全新】策略 22: 高勝率基因精選 (創五日高 + 連續墊高 + 跳空量增 + 雙法人連三日無賣)
-    # ==========================
+    # 策略 22
     def cond22_fn(k):
         close_5 = [f'收盤價_{k+j}' for j in range(1, 6)]
         max_5 = df_merge[close_5].max(axis=1)
@@ -1267,6 +1279,33 @@ def main():
     cols22 = base_cols + ["增量倍數"] + chip_cols
     html_tb22 = apply_color_formatting(res22[cols22]).to_html(index=False, classes="styled-table sortable-table", escape=False)
 
+    # 策略 23
+    def cond23_fn(k):
+        def _get_max_high_at(row, offset):
+            try:
+                vols = [(float(row.get(f'成交量_{offset+j}', -1)), offset+j) for j in range(1, 11)]
+                valid = [v for v in vols if pd.notna(v[0])]
+                if not valid: return 0.0
+                idx = max(valid, key=lambda x: x[0])[1]
+                return float(row.get(f'最高價_{idx}', 0.0))
+            except Exception:
+                return 0.0
+        max_h = df_merge.apply(lambda r: _get_max_high_at(r, k), axis=1)
+        return (max_h > 0) & (df_merge[f'收盤價_{k}'] > max_h)
+
+    res23_hits = eval_rolling_condition(cond23_fn)
+    cond23 = (
+        (df_merge['近10日最大量日最高價'] > 0) &
+        (df_merge['收盤價_0'] > df_merge['近10日最大量日最高價'])
+    )
+    res23 = df_merge[cond23].copy()
+    res23['近7日符合次數'] = res23_hits[cond23]
+    res23["增量倍數"] = (res23["成交量_0"] / res23["成交量_1"]).round(2)
+    res23 = res23.sort_values(by=["最新漲幅(%)", "增量倍數"], ascending=[False, False])
+    res23 = res23.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
+    cols23 = base_cols + ["近10日最大量日最高價", "增量倍數"] + chip_cols
+    html_tb23 = apply_color_formatting(res23[cols23]).to_html(index=False, classes="styled-table sortable-table", escape=False)
+
     # 策略 21 回測
     print("🔬 正在執行過去 30 天各策略隔日勝率回測計算...")
     strategy_eval_funcs = [
@@ -1290,6 +1329,7 @@ def main():
         ("19.營收暴增1.5倍", cond19_fn),
         ("20.外資越買越多出量", cond20_fn),
         ("22.高勝率基因複合", cond22_fn),
+        ("23.突破10日最大量", cond23_fn),
     ]
 
     backtest_records = []
@@ -1344,7 +1384,8 @@ def main():
         ("14.創20日高+法人七日不賣", res14), ("15.壓縮突破60日高", res15_strict),
         ("16.突破最大量高點", res16), ("17.創120日新高", res17),
         ("18.營收連三增啟動", res18), ("19.營收暴增1.5倍", res19),
-        ("20.外資越買越多出量", res20), ("22.高勝率基因複合", res22)
+        ("20.外資越買越多出量", res20), ("22.高勝率基因複合", res22),
+        ("23.突破10日最大量", res23)
     ]
     
     hit_counts = {}
@@ -1627,7 +1668,6 @@ def main():
                 border-bottom: none;
             }}
 
-            /* 股票表格前兩欄固定 */
             .styled-table:not(.backtest-table) th:nth-child(1),
             .styled-table:not(.backtest-table) td:nth-child(1) {{
                 position: sticky;
@@ -1660,7 +1700,6 @@ def main():
                 background-color: #ffffff;
             }}
 
-            /* 策略 21 專屬樣式：不套用 position:sticky 避免遮擋第一欄 */
             .backtest-table th, .backtest-table td {{
                 position: static !important;
                 box-shadow: none !important;
@@ -1738,6 +1777,7 @@ def main():
 
         <div class="tabs-wrapper" id="tabsHeader">
             <button class="tab-btn active" onclick="openStrategy(event, 'Strat12')">🌟 12. 綜合排行</button>
+            <button class="tab-btn" onclick="openStrategy(event, 'Strat23')">🔥 23. 突破10日最大量</button>
             <button class="tab-btn" onclick="openStrategy(event, 'Strat22')">🎯 22. 高勝率基因精選</button>
             <button class="tab-btn" onclick="openStrategy(event, 'Strat21')">📊 21. 隔日勝率統計</button>
             <button class="tab-btn" onclick="openStrategy(event, 'Strat20')">🚀 20. 外資越買越多出量</button>
@@ -1770,6 +1810,14 @@ def main():
                     <div class="count-badge">✅ 前 50 名強勢標的</div>
                 </div>
                 <div class="table-container">{html_tb12}</div>
+            </div>
+
+            <div id="Strat23" class="tabcontent">
+                <div class="info-box">
+                    <p>🎯 <b>策略 23：突破過去10天最大量高點</b> 最新收盤價正式突破過去 10 個交易日內成交量最大那一天的當日最高價（消化主力換手量壓力）。</p>
+                    <div class="count-badge">符合：<span id="count_Strat23">{len(res23)}</span> 檔</div>
+                </div>
+                <div class="table-container">{html_tb23}</div>
             </div>
 
             <div id="Strat22" class="tabcontent">
@@ -2053,10 +2101,10 @@ def main():
             }}
 
             function enableTableSorting() {{
-                document.querySelectorAll('.styled-table th').forEach(header => {
+                document.querySelectorAll('.styled-table th').forEach(header => {{
                     if (header.cellIndex === 0 && header.innerText.includes("⭐")) return;
 
-                    header.addEventListener('click', function() {
+                    header.addEventListener('click', function() {{
                         const table = this.closest('table');
                         const tbody = table.querySelector('tbody');
                         const isAscending = this.classList.contains('th-sort-asc');
@@ -2064,45 +2112,45 @@ def main():
 
                         table.querySelectorAll('th').forEach(th => th.classList.remove('th-sort-asc', 'th-sort-desc'));
 
-                        if (isAscending) {
+                        if (isAscending) {{
                             this.classList.add('th-sort-desc');
                             sortTbody(tbody, colIndex, false);
-                        } else {
+                        }} else {{
                             this.classList.add('th-sort-asc');
                             sortTbody(tbody, colIndex, true);
-                        }
-                    });
-                });
+                        }}
+                    }});
+                }});
             }}
 
-            function updateVisibleCount(tabId, visibleCount) {
+            function updateVisibleCount(tabId, visibleCount) {{
                 let elem = document.getElementById("count_" + tabId);
                 if(elem) elem.innerText = visibleCount;
-            }
+            }}
 
-            function filterTable(tabId, maxValStr) {
+            function filterTable(tabId, maxValStr) {{
                 let maxVal = parseFloat(maxValStr);
                 let table = document.getElementById(tabId).querySelector("table");
                 if (!table) return;
 
                 let headers = table.querySelectorAll("thead th");
                 let colIdxs = [];
-                headers.forEach((th, idx) => { if (th.innerText.includes("增量")) colIdxs.push(idx); });
+                headers.forEach((th, idx) => {{ if (th.innerText.includes("增量")) colIdxs.push(idx); }});
 
                 let count = 0;
-                table.querySelectorAll("tbody tr").forEach(row => {
+                table.querySelectorAll("tbody tr").forEach(row => {{
                     let show = true;
                     let cells = row.querySelectorAll("td");
-                    for(let i = 0; i < colIdxs.length; i++) {
-                        if (parseFloat(cells[colIdxs[i]].innerText) > maxVal) { show = false; break; }
-                    }
+                    for(let i = 0; i < colIdxs.length; i++) {{
+                        if (parseFloat(cells[colIdxs[i]].innerText) > maxVal) {{ show = false; break; }}
+                    }}
                     row.style.display = show ? "" : "none";
                     if(show) count++;
-                });
+                }});
                 updateVisibleCount(tabId, count);
-            }
+            }}
 
-            function filterStrat1() {
+            function filterStrat1() {{
                 let maxVol = parseFloat(document.getElementById('sel_Strat1_vol').value);
                 let minGap = parseInt(document.getElementById('sel_Strat1_gap').value);
                 let minVolDays = parseInt(document.getElementById('sel_Strat1_vol_days').value);
@@ -2112,25 +2160,25 @@ def main():
 
                 let headers = table.querySelectorAll("thead th");
                 let idxVol = -1, idxGap = -1, idxVolDays = -1;
-                headers.forEach((th, i) => {
+                headers.forEach((th, i) => {{
                     if (th.innerText.includes("增量倍數")) idxVol = i;
                     if (th.innerText.includes("跳空天數")) idxGap = i;
                     if (th.innerText.includes("量增天數")) idxVolDays = i;
-                });
+                }});
 
                 let count = 0;
-                table.querySelectorAll("tbody tr").forEach(row => {
+                table.querySelectorAll("tbody tr").forEach(row => {{
                     let cells = row.querySelectorAll("td");
                     let show = (parseFloat(cells[idxVol].innerText) <= maxVol) &&
                                (parseInt(cells[idxGap].innerText) >= minGap) &&
                                (parseInt(cells[idxVolDays].innerText) >= minVolDays);
                     row.style.display = show ? "" : "none";
                     if(show) count++;
-                });
+                }});
                 updateVisibleCount('Strat1', count);
-            }
+            }}
 
-            function filterStrat2() {
+            function filterStrat2() {{
                 let maxVol = parseFloat(document.getElementById('sel_Strat2_vol').value);
                 let minStep = parseInt(document.getElementById('sel_Strat2_step').value);
                 let minVolDays = parseInt(document.getElementById('sel_Strat2_voldays').value);
@@ -2141,15 +2189,15 @@ def main():
 
                 let headers = table.querySelectorAll("thead th");
                 let idxVol = -1, idxStep = -1, idxVolDays = -1, idxFBuy = -1;
-                headers.forEach((th, i) => {
+                headers.forEach((th, i) => {{
                     if (th.innerText.includes("增量倍數")) idxVol = i;
                     if (th.innerText.includes("墊高天數")) idxStep = i;
                     if (th.innerText.includes("量增天數")) idxVolDays = i;
                     if (th.innerText.includes("外資連買天數")) idxFBuy = i;
-                });
+                }});
 
                 let count = 0;
-                table.querySelectorAll("tbody tr").forEach(row => {
+                table.querySelectorAll("tbody tr").forEach(row => {{
                     let cells = row.querySelectorAll("td");
                     let show = (parseFloat(cells[idxVol].innerText) <= maxVol) &&
                                (parseInt(cells[idxStep].innerText) >= minStep) &&
@@ -2157,11 +2205,11 @@ def main():
                                (parseInt(cells[idxFBuy].innerText) >= minFBuy);
                     row.style.display = show ? "" : "none";
                     if(show) count++;
-                });
+                }});
                 updateVisibleCount('Strat2', count);
-            }
+            }}
 
-            function filterStrat3() {
+            function filterStrat3() {{
                 let maxVol = parseFloat(document.getElementById('sel_Strat3_vol').value);
                 let minFbuy = parseInt(document.getElementById('sel_Strat3_fbuy').value);
                 let minUpDays = parseInt(document.getElementById('sel_Strat3_updays').value);
@@ -2171,25 +2219,25 @@ def main():
 
                 let headers = table.querySelectorAll("thead th");
                 let idxVol = -1, idxFbuy = -1, idxUpDays = -1;
-                headers.forEach((th, i) => {
+                headers.forEach((th, i) => {{
                     if (th.innerText.includes("增量倍數")) idxVol = i;
                     if (th.innerText.includes("外資連買天數")) idxFbuy = i;
                     if (th.innerText.includes("連漲天數")) idxUpDays = i;
-                });
+                }});
 
                 let count = 0;
-                table.querySelectorAll("tbody tr").forEach(row => {
+                table.querySelectorAll("tbody tr").forEach(row => {{
                     let cells = row.querySelectorAll("td");
                     let show = (parseFloat(cells[idxVol].innerText) <= maxVol) &&
                                (parseInt(cells[idxFbuy].innerText) >= minFbuy) &&
                                (parseInt(cells[idxUpDays].innerText) >= minUpDays);
                     row.style.display = show ? "" : "none";
                     if(show) count++;
-                });
+                }});
                 updateVisibleCount('Strat3', count);
-            }
+            }}
 
-            function filterStrat14() {
+            function filterStrat14() {{
                 let maxVol = parseFloat(document.getElementById('sel_Strat14_vol').value);
                 let minFbuy = parseInt(document.getElementById('sel_Strat14_fbuy').value);
                 let minUpDays = parseInt(document.getElementById('sel_Strat14_updays').value);
@@ -2199,25 +2247,25 @@ def main():
 
                 let headers = table.querySelectorAll("thead th");
                 let idxVol = -1, idxFbuy = -1, idxUpDays = -1;
-                headers.forEach((th, i) => {
+                headers.forEach((th, i) => {{
                     if (th.innerText.includes("增量倍數")) idxVol = i;
                     if (th.innerText.includes("外資連買天數")) idxFbuy = i;
                     if (th.innerText.includes("連漲天數")) idxUpDays = i;
-                });
+                }});
 
                 let count = 0;
-                table.querySelectorAll("tbody tr").forEach(row => {
+                table.querySelectorAll("tbody tr").forEach(row => {{
                     let cells = row.querySelectorAll("td");
                     let show = (parseFloat(cells[idxVol].innerText) <= maxVol) &&
                                (parseInt(cells[idxFbuy].innerText) >= minFbuy) &&
                                (parseInt(cells[idxUpDays].innerText) >= minUpDays);
                     row.style.display = show ? "" : "none";
                     if(show) count++;
-                });
+                }});
                 updateVisibleCount('Strat14', count);
-            }
+            }}
 
-            function filterStrat15() {
+            function filterStrat15() {{
                 let minVol = parseFloat(document.getElementById('sel_Strat15_vol').value);
                 let maxRange = parseFloat(document.getElementById('sel_Strat15_range').value);
                 let checkMaxVol = document.getElementById('sel_Strat15_maxvol').value;
@@ -2228,15 +2276,15 @@ def main():
 
                 let headers = table.querySelectorAll("thead th");
                 let idxVol = -1, idxAmp20 = -1, idxAmp40 = -1, idxAmp60 = -1;
-                headers.forEach((th, i) => {
+                headers.forEach((th, i) => {{
                     if (th.innerText.includes("增量倍數")) idxVol = i;
                     if (th.innerText.includes("20日震幅")) idxAmp20 = i;
                     if (th.innerText.includes("40日震幅")) idxAmp40 = i;
                     if (th.innerText.includes("60日震幅")) idxAmp60 = i;
-                });
+                }});
 
                 let count = 0;
-                table.querySelectorAll("tbody tr").forEach(row => {
+                table.querySelectorAll("tbody tr").forEach(row => {{
                     let cells = row.querySelectorAll("td");
                     let isMaxVol = row.getAttribute('data-is-max-vol') === "true"; 
                     let targetAmpIdx = period === "20" ? idxAmp20 : (period === "40" ? idxAmp40 : idxAmp60);
@@ -2247,31 +2295,31 @@ def main():
                                
                     row.style.display = show ? "" : "none";
                     if(show) count++;
-                });
+                }});
                 updateVisibleCount('Strat15', count);
-            }
+            }}
             
-            function filterStrat16() {
+            function filterStrat16() {{
                 let minVol = parseFloat(document.getElementById('sel_Strat16_vol').value);
                 let table = document.getElementById('Strat16').querySelector("table");
                 if (!table) return;
 
                 let headers = table.querySelectorAll("thead th");
                 let idxVol = -1;
-                headers.forEach((th, i) => { if (th.innerText.includes("增量倍數")) idxVol = i; });
+                headers.forEach((th, i) => {{ if (th.innerText.includes("增量倍數")) idxVol = i; }});
 
                 let count = 0;
-                table.querySelectorAll("tbody tr").forEach(row => {
+                table.querySelectorAll("tbody tr").forEach(row => {{
                     let cells = row.querySelectorAll("td");
                     let show = true;
                     if (minVol > 0 && parseFloat(cells[idxVol].innerText) < minVol) show = false;
                     row.style.display = show ? "" : "none";
                     if(show) count++;
-                });
+                }});
                 updateVisibleCount('Strat16', count);
-            }
+            }}
 
-            function filterStrat9() {
+            function filterStrat9() {{
                 let pctMin = parseFloat(document.getElementById('sel9_pct').value);
                 let tdccMin = parseFloat(document.getElementById('sel9_tdcc').value);
                 let highCond = document.getElementById('sel9_high').value;
@@ -2281,20 +2329,20 @@ def main():
 
                 let headers = table.querySelectorAll("thead th");
                 let idxPct = -1, idxTdcc = -1, idx5 = -1, idx20 = -1;
-                headers.forEach((th, i) => {
+                headers.forEach((th, i) => {{
                     if (th.innerText.includes("最新漲幅")) idxPct = i;
                     if (th.innerText.includes("千張大戶")) idxTdcc = i;
                     if (th.innerText.includes("創5日高")) idx5 = i;
                     if (th.innerText.includes("創20日高")) idx20 = i;
-                });
+                }});
 
                 let count = 0;
-                table.querySelectorAll("tbody tr").forEach(row => {
+                table.querySelectorAll("tbody tr").forEach(row => {{
                     let cells = row.querySelectorAll("td");
                     let is5High = cells[idx5].innerText.includes("是");
                     let is20High = cells[idx20].innerText.includes("是");
 
-                    let valPct = parseFloat(cells[idxPct].innerText.replace(/,/g, '').replace(/%/g, '').replace(/\+/g, ''));
+                    let valPct = parseFloat(cells[idxPct].innerText.replace(/,/g, '').replace(/%/g, '').replace(/\\+/g, ''));
                     let valTdcc = parseFloat(cells[idxTdcc].innerText.replace(/,/g, ''));
 
                     let show = (valPct >= pctMin) && (valTdcc >= tdccMin);
@@ -2304,68 +2352,68 @@ def main():
 
                     row.style.display = show ? "" : "none";
                     if(show) count++;
-                });
+                }});
                 updateVisibleCount('Strat9', count);
-            }
+            }}
 
-            function filterStrat10() {
+            function filterStrat10() {{
                 let minPct = parseFloat(document.getElementById('sel_Strat10_pct').value);
                 let table = document.getElementById('Strat10').querySelector("table");
                 if (!table) return;
 
                 let headers = table.querySelectorAll("thead th");
                 let idxPct = -1;
-                headers.forEach((th, i) => { if (th.innerText.includes("最新漲幅")) idxPct = i; });
+                headers.forEach((th, i) => {{ if (th.innerText.includes("最新漲幅")) idxPct = i; }});
 
                 let count = 0;
-                table.querySelectorAll("tbody tr").forEach(row => {
-                    let valPct = parseFloat(row.querySelectorAll("td")[idxPct].innerText.replace(/,/g, '').replace(/%/g, '').replace(/\+/g, ''));
+                table.querySelectorAll("tbody tr").forEach(row => {{
+                    let valPct = parseFloat(row.querySelectorAll("td")[idxPct].innerText.replace(/,/g, '').replace(/%/g, '').replace(/\\+/g, ''));
                     let show = valPct >= minPct;
                     row.style.display = show ? "" : "none";
                     if(show) count++;
-                });
+                }});
                 updateVisibleCount('Strat10', count);
-            }
+            }}
 
-            function filterStrat11() {
+            function filterStrat11() {{
                 let minK = parseFloat(document.getElementById('sel_Strat11_k').value);
                 let table = document.getElementById('Strat11').querySelector("table");
                 if (!table) return;
 
                 let headers = table.querySelectorAll("thead th");
                 let idxK = -1;
-                headers.forEach((th, i) => { if (th.innerText.includes("實體K漲幅")) idxK = i; });
+                headers.forEach((th, i) => {{ if (th.innerText.includes("實體K漲幅")) idxK = i; }});
 
                 let count = 0;
-                table.querySelectorAll("tbody tr").forEach(row => {
-                    let valK = parseFloat(row.querySelectorAll("td")[idxK].innerText.replace(/,/g, '').replace(/%/g, '').replace(/\+/g, ''));
+                table.querySelectorAll("tbody tr").forEach(row => {{
+                    let valK = parseFloat(row.querySelectorAll("td")[idxK].innerText.replace(/,/g, '').replace(/%/g, '').replace(/\\+/g, ''));
                     let show = valK >= minK;
                     row.style.display = show ? "" : "none";
                     if(show) count++;
-                });
+                }});
                 updateVisibleCount('Strat11', count);
-            }
+            }}
             
-            function filterStrat13() {
+            function filterStrat13() {{
                 let minDist = parseFloat(document.getElementById('sel_Strat13_dist').value);
                 let table = document.getElementById('Strat13').querySelector("table");
                 if (!table) return;
 
                 let headers = table.querySelectorAll("thead th");
                 let idxDist = -1;
-                headers.forEach((th, i) => { if (th.innerText.includes("距離60日高點(%)")) idxDist = i; });
+                headers.forEach((th, i) => {{ if (th.innerText.includes("距離60日高點(%)")) idxDist = i; }});
 
                 let count = 0;
-                table.querySelectorAll("tbody tr").forEach(row => {
+                table.querySelectorAll("tbody tr").forEach(row => {{
                     let valDist = parseFloat(row.querySelectorAll("td")[idxDist].innerText.replace(/,/g, '').replace(/%/g, ''));
                     let show = valDist >= minDist;
                     row.style.display = show ? "" : "none";
                     if(show) count++;
-                });
+                }});
                 updateVisibleCount('Strat13', count);
-            }
+            }}
 
-            window.addEventListener('DOMContentLoaded', () => {
+            window.addEventListener('DOMContentLoaded', () => {{
                 setupFavorites();
                 enableTableSorting();
                 
@@ -2384,7 +2432,7 @@ def main():
                 filterStrat10();
                 filterStrat11();
                 filterStrat13();
-            });
+            }});
             
             setTimeout(filterStrat15, 100);
         </script>
@@ -2403,7 +2451,7 @@ def main():
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(html_content)
 
-    print(f"\n✅ 策略 22（高勝率基因複合選股）已生成！檔案: {html_filename}")
+    print(f"\n✅ 語法錯誤已修正！策略 23 已就緒。檔案已生成: {html_filename}")
     if os.environ.get("GITHUB_ACTIONS") != "true":
         webbrowser.open(f"file:///{file_path}")
 

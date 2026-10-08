@@ -35,6 +35,28 @@ if not os.path.exists(CACHE_DIR):
 
 WARNINGS = []
 
+def is_valid_cache(filepath: str, min_size: int = 50) -> bool:
+    """檢查快取檔案是否存在且不是空白損壞檔"""
+    return os.path.exists(filepath) and os.path.getsize(filepath) >= min_size
+
+def safe_read_csv(filepath: str, **kwargs) -> pd.DataFrame:
+    """安全讀取快取 CSV，避免 EmptyDataError"""
+    if not is_valid_cache(filepath):
+        if os.path.exists(filepath):
+            try:
+                os.remove(filepath)
+            except Exception:
+                pass
+        return pd.DataFrame()
+    try:
+        return pd.read_csv(filepath, **kwargs)
+    except Exception:
+        try:
+            os.remove(filepath)
+        except Exception:
+            pass
+        return pd.DataFrame()
+
 def to_float(x, default=0.0):
     try:
         return float(str(x).replace(",", "").replace("%", "").strip())
@@ -161,10 +183,9 @@ def _is_dup_otc(date_str: str, df: pd.DataFrame) -> bool:
 
 def get_market_data(date_str: str) -> pd.DataFrame:
     cache_file = os.path.join(CACHE_DIR, f"market_{date_str}.csv")
-    if os.path.exists(cache_file):
-        df_cached = pd.read_csv(cache_file, dtype={"股票代號": str})
-        if "上櫃" in df_cached["市場"].values and not _is_dup_otc(date_str, df_cached):
-            return df_cached
+    df_cached = safe_read_csv(cache_file, dtype={"股票代號": str})
+    if not df_cached.empty and "上櫃" in df_cached["市場"].values and not _is_dup_otc(date_str, df_cached):
+        return df_cached
 
     print(f"🌐 [{date_str}] 抓取【上市+上櫃價量】資料...")
     df_twse = fetch_twse_daily(date_str)
@@ -247,10 +268,9 @@ def fetch_tpex_inst(date_str: str) -> pd.DataFrame:
 
 def get_inst_data(date_str: str) -> pd.DataFrame:
     cache_file = os.path.join(CACHE_DIR, f"inst_{date_str}.csv")
-    if os.path.exists(cache_file):
-        df_cached = pd.read_csv(cache_file, dtype={"股票代號": str})
-        if len(df_cached) > 500:
-            return df_cached
+    df_cached = safe_read_csv(cache_file, dtype={"股票代號": str})
+    if len(df_cached) > 500:
+        return df_cached
 
     print(f"🌐 [{date_str}] 抓取【上市+上櫃法人籌碼】資料...")
     df_twse = fetch_twse_inst(date_str)
@@ -274,8 +294,9 @@ def get_tdcc_data() -> pd.DataFrame:
     today_str = datetime.date.today().strftime("%Y%m%d")
     cache_file = os.path.join(CACHE_DIR, f"tdcc_{today_str}.csv")
 
-    if os.path.exists(cache_file):
-        return pd.read_csv(cache_file, dtype={"股票代號": str})
+    df_cached = safe_read_csv(cache_file, dtype={"股票代號": str})
+    if not df_cached.empty:
+        return df_cached
 
     print("🌐 抓取【集保千張大戶】...")
     url = "https://smart.tdcc.com.tw/opendata/getOD.ashx?id=1-5"
@@ -298,12 +319,14 @@ def get_tdcc_data() -> pd.DataFrame:
                                 "股票代號": code,
                                 "千張大戶比例(%)": ratio
                             })
-                df_tdcc = pd.DataFrame(rows)
-                df_tdcc.to_csv(cache_file, index=False, encoding="utf-8-sig")
-                return df_tdcc
+                if rows:
+                    df_tdcc = pd.DataFrame(rows)
+                    df_tdcc.to_csv(cache_file, index=False, encoding="utf-8-sig")
+                    return df_tdcc
         except Exception:
             pass
         time.sleep(0.5)
+
     WARNINGS.append("千張大戶資料 抓取失敗")
     return pd.DataFrame(columns=["股票代號", "千張大戶比例(%)"])
 
@@ -311,8 +334,9 @@ def get_foreign_holdings() -> pd.DataFrame:
     today_str = datetime.date.today().strftime("%Y%m%d")
     cache_file = os.path.join(CACHE_DIR, f"foreign_holdings_{today_str}.csv")
 
-    if os.path.exists(cache_file):
-        return pd.read_csv(cache_file, dtype={"股票代號": str})
+    df_cached = safe_read_csv(cache_file, dtype={"股票代號": str})
+    if not df_cached.empty:
+        return df_cached
 
     print("🌐 抓取【外資持股總比例與發行張數】...")
     rows = []
@@ -378,8 +402,9 @@ def get_foreign_holdings() -> pd.DataFrame:
 
 def fetch_month_revenue(year_roc: int, month: int) -> pd.DataFrame:
     cache_file = os.path.join(CACHE_DIR, f"rev_{year_roc}_{month:02d}.csv")
-    if os.path.exists(cache_file):
-        return pd.read_csv(cache_file, dtype={"股票代號": str})
+    df_cached = safe_read_csv(cache_file, dtype={"股票代號": str})
+    if not df_cached.empty:
+        return df_cached
 
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -2451,7 +2476,7 @@ def main():
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(html_content)
 
-    print(f"\n✅ 語法錯誤已修正！策略 23 已就緒。檔案已生成: {html_filename}")
+    print(f"\n✅ 修正空快取問題完畢！檔案已生成: {html_filename}")
     if os.environ.get("GITHUB_ACTIONS") != "true":
         webbrowser.open(f"file:///{file_path}")
 

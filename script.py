@@ -1478,11 +1478,18 @@ def main():
     html_tb21 = df_strat21_show.to_html(index=False, classes="styled-table backtest-table sortable-table", escape=False)
 
     # ============================================================
-    # 【全新】策略 26：30天高勝率策略組合挖掘器
+    # 【修改版】策略 26：09/01~09/30 找策略組合 → 10/08 報酬驗證
     # ============================================================
-    # 重要：18/19/24/25 含「目前快照」的營收/大戶資料，若直接拿來做歷史日回測
-    # 會造成資料穿越（look-ahead bias），因此策略 26 的組合挖掘先排除這四個策略。
-    # 策略 26 延續策略 21 的定義：每次訊號後，以「隔天收盤漲跌」作為勝負。
+    # 使用者指定的研究框架：
+    #   1) 僅使用 09/01~09/30 的歷史訊號，找出兩兩策略組合。
+    #   2) 對於 09/01~09/30 曾被某組合命中的股票，統一觀察 10/08 的單日漲幅。
+    #   3) 以「10/08 平均漲幅」作為主要排序依據，再看中位數、上漲率與樣本數。
+    #   4) 找到回溯最佳組合後，將同一組合套用到 10/08 當日，產生策略 26 選股。
+    #
+    # 注意：這是「事後研究/特徵探索」，因為 10/08 的漲幅已被拿來選出最佳組合，
+    # 所以不能把 10/08 的結果直接視為 10/08 開盤前可取得的即時預測績效。
+    #
+    # 18/19/24/25 含目前快照型營收/大戶資料，若回放 09 月會造成資料穿越，故排除。
     strat26_candidates = [
         ("1.跳空不補", cond1_fn),
         ("2.連續墊高", cond2_fn),
@@ -1505,30 +1512,25 @@ def main():
         ("23.突破10日最大量", cond23_fn),
     ]
 
-    STRAT26_MIN_WIN_RATE = 80.0
-    STRAT26_MIN_SAMPLES = 10
-    print(f"🧠 正在挖掘策略 26：過去 30 個交易日的雙策略組合（勝率 > {STRAT26_MIN_WIN_RATE:.0f}%，樣本 >= {STRAT26_MIN_SAMPLES}）...")
+    STRAT26_TRAIN_START = "20260901"
+    STRAT26_TRAIN_END = "20260930"
+    STRAT26_TARGET_DATE = "20261008"
+    STRAT26_MIN_SAMPLES = 5
 
-    # 先把每個策略在 T-1 ~ T-30 的歷史訊號與隔日報酬快取起來，
-    # 避免組合計算時重複呼叫 cond_fn(k)。
+    date_to_k = {date_str: idx for idx, (date_str, _) in enumerate(days_data)}
+    sep_indices = [
+        idx for idx, (date_str, _) in enumerate(days_data)
+        if STRAT26_TRAIN_START <= date_str <= STRAT26_TRAIN_END
+    ]
+    target_k = date_to_k.get(STRAT26_TARGET_DATE)
+
+    print(
+        f"🧠 策略26：使用 {STRAT26_TRAIN_START}~{STRAT26_TRAIN_END} "
+        f"找雙策略組合，並以 {STRAT26_TARGET_DATE} 單日漲幅評分..."
+    )
+
     strat26_signal_cache = {name: {} for name, _ in strat26_candidates}
-    strat26_return_cache = {}
-
-    for k in range(1, 31):
-        valid_next = (
-            df_merge[f"收盤價_{k}"].notna() &
-            df_merge[f"收盤價_{k}"].gt(0) &
-            df_merge[f"收盤價_{k-1}"].notna() &
-            df_merge[f"收盤價_{k-1}"].gt(0)
-        )
-        next_ret = pd.Series(np.nan, index=df_merge.index, dtype=float)
-        next_ret.loc[valid_next] = (
-            (df_merge.loc[valid_next, f"收盤價_{k-1}"] -
-             df_merge.loc[valid_next, f"收盤價_{k}"]) /
-            df_merge.loc[valid_next, f"收盤價_{k}"] * 100.0
-        )
-        strat26_return_cache[k] = next_ret.to_numpy(dtype=float)
-
+    for k in sep_indices + ([target_k] if target_k is not None else []):
         for st_name, st_fn in strat26_candidates:
             try:
                 sig = st_fn(k)
@@ -1539,160 +1541,185 @@ def main():
             except Exception:
                 strat26_signal_cache[st_name][k] = np.zeros(len(df_merge), dtype=bool)
 
+    # 10/08 單日報酬：10/07 收盤 → 10/08 收盤
+    target_return = pd.Series(np.nan, index=df_merge.index, dtype=float)
+    if target_k is not None and f"收盤價_{target_k + 1}" in df_merge.columns:
+        c_target = df_merge[f"收盤價_{target_k}"]
+        c_prev = df_merge[f"收盤價_{target_k + 1}"]
+        valid_target = c_target.notna() & c_prev.notna() & c_prev.gt(0)
+        target_return.loc[valid_target] = (
+            (c_target.loc[valid_target] - c_prev.loc[valid_target]) /
+            c_prev.loc[valid_target] * 100.0
+        )
+    else:
+        # 本程式正常在 10/08 執行時會走上面的路徑；若日期不在資料集，改用目前最新日，
+        # 同時明確在頁面訊息中提示，避免靜默使用其他日期。
+        target_k = 0
+        c_target = df_merge.get("收盤價_0", pd.Series(np.nan, index=df_merge.index))
+        c_prev = df_merge.get("收盤價_1", pd.Series(np.nan, index=df_merge.index))
+        valid_target = c_target.notna() & c_prev.notna() & c_prev.gt(0)
+        target_return.loc[valid_target] = (
+            (c_target.loc[valid_target] - c_prev.loc[valid_target]) /
+            c_prev.loc[valid_target] * 100.0
+        )
+
+    # ------------------------------------------------------------
+    # 找出：09/01~09/30 曾經同時命中某兩策略的股票，
+    # 再統一觀察這些股票在 10/08 的實際漲幅。
+    # ------------------------------------------------------------
     strat26_combo_records = []
     strat26_names = [x[0] for x in strat26_candidates]
 
-    # 採「兩個策略同時命中」作為組合單位。
-    # 條件越多不一定越好，故先用樣本數與歷史勝率控制過擬合，再用平均報酬排序。
     for st_a, st_b in itertools.combinations(strat26_names, 2):
-        total = 0
-        up = 0
-        returns = []
+        hit_stocks = set()
+        last_hit_date = {}
+        hit_days = {}
 
-        for k in range(1, 31):
+        for k in sep_indices:
             sig_a = strat26_signal_cache[st_a].get(k)
             sig_b = strat26_signal_cache[st_b].get(k)
             if sig_a is None or sig_b is None:
                 continue
-
             combo_mask = sig_a & sig_b
-            if not combo_mask.any():
-                continue
+            idxs = df_merge.index[combo_mask]
+            date_str = days_data[k][0]
+            for idx in idxs:
+                code = str(df_merge.at[idx, "股票代號"])
+                hit_stocks.add(code)
+                hit_days[code] = hit_days.get(code, 0) + 1
+                last_hit_date[code] = date_str
 
-            r = strat26_return_cache[k]
-            valid = combo_mask & np.isfinite(r)
-            if not valid.any():
-                continue
-
-            combo_returns = r[valid]
-            total += int(combo_returns.size)
-            up += int((combo_returns > 0).sum())
-            returns.extend(combo_returns.tolist())
-
-        if total < STRAT26_MIN_SAMPLES:
+        if len(hit_stocks) < STRAT26_MIN_SAMPLES:
             continue
 
-        win_rate = (up / total) * 100.0
-        if win_rate > STRAT26_MIN_WIN_RATE:
-            avg_ret = float(np.mean(returns)) if returns else 0.0
-            strat26_combo_records.append({
-                "策略組合": f"{st_a} × {st_b}",
-                "策略A": st_a,
-                "策略B": st_b,
-                "30日隔日上漲率(%)": round(win_rate, 2),
-                "30日平均隔日報酬(%)": round(avg_ret, 2),
-                "樣本數": total,
-                "上漲次數": up,
-                "下跌次數": total - up,
-            })
+        combo_rows = []
+        for code in hit_stocks:
+            row_idx = df_merge.index[df_merge["股票代號"].astype(str) == code]
+            if len(row_idx) == 0:
+                continue
+            idx = row_idx[0]
+            r = target_return.loc[idx]
+            if pd.notna(r):
+                combo_rows.append({
+                    "股票代號": code,
+                    "10/08漲幅(%)": float(r),
+                    "09月命中次數": int(hit_days.get(code, 0)),
+                    "09月最後命中日": last_hit_date.get(code, "")
+                })
+
+        if len(combo_rows) < STRAT26_MIN_SAMPLES:
+            continue
+
+        combo_df = pd.DataFrame(combo_rows)
+        rets = combo_df["10/08漲幅(%)"].astype(float)
+        avg_ret = float(rets.mean())
+        median_ret = float(rets.median())
+        max_ret = float(rets.max())
+        min_ret = float(rets.min())
+        up_rate = float((rets > 0).mean() * 100.0)
+
+        strat26_combo_records.append({
+            "策略組合": f"{st_a} × {st_b}",
+            "策略A": st_a,
+            "策略B": st_b,
+            "10/08平均漲幅(%)": round(avg_ret, 2),
+            "10/08中位數漲幅(%)": round(median_ret, 2),
+            "10/08最大漲幅(%)": round(max_ret, 2),
+            "10/08最小漲幅(%)": round(min_ret, 2),
+            "10/08上漲率(%)": round(up_rate, 2),
+            "樣本股票數": int(len(combo_df)),
+            "09月命中總次數": int(combo_df["09月命中次數"].sum()),
+        })
 
     df_strat26_combo = pd.DataFrame(strat26_combo_records)
-
     if not df_strat26_combo.empty:
-        # 優先歷史勝率，其次樣本數，再其次平均報酬。
+        # 主要找「10/08 平均漲幅最大」；若平均相近，再看中位數、上漲率、樣本數。
         df_strat26_combo = df_strat26_combo.sort_values(
-            by=["30日隔日上漲率(%)", "樣本數", "30日平均隔日報酬(%)"],
-            ascending=[False, False, False]
+            by=["10/08平均漲幅(%)", "10/08中位數漲幅(%)", "10/08上漲率(%)", "樣本股票數"],
+            ascending=[False, False, False, False]
         ).reset_index(drop=True)
         df_strat26_combo.insert(0, "排名", np.arange(1, len(df_strat26_combo) + 1))
 
         df_strat26_combo_show = df_strat26_combo[
-            ["排名", "策略組合", "30日隔日上漲率(%)", "30日平均隔日報酬(%)",
-             "樣本數", "上漲次數", "下跌次數"]
+            ["排名", "策略組合", "10/08平均漲幅(%)", "10/08中位數漲幅(%)",
+             "10/08最大漲幅(%)", "10/08上漲率(%)", "樣本股票數", "09月命中總次數"]
         ].copy()
-        df_strat26_combo_show["30日隔日上漲率(%)"] = df_strat26_combo_show["30日隔日上漲率(%)"].apply(
-            lambda x: f"<b style='color:#dc2626;'>{x:.2f}%</b>"
-        )
-        df_strat26_combo_show["30日平均隔日報酬(%)"] = df_strat26_combo_show["30日平均隔日報酬(%)"].apply(color_pct)
+        for col in ["10/08平均漲幅(%)", "10/08中位數漲幅(%)", "10/08最大漲幅(%)", "10/08上漲率(%)"]:
+            if col in df_strat26_combo_show.columns:
+                df_strat26_combo_show[col] = df_strat26_combo_show[col].apply(color_pct)
         html_tb26_combo = df_strat26_combo_show.to_html(
             index=False, classes="styled-table backtest-table sortable-table", escape=False
         )
     else:
         html_tb26_combo = (
             "<p style='text-align:center;padding:14px;'>"
-            f"過去30日沒有找到「勝率 &gt; {STRAT26_MIN_WIN_RATE:.0f}% 且樣本 >= {STRAT26_MIN_SAMPLES}」的雙策略組合。"
+            f"{STRAT26_TRAIN_START}~{STRAT26_TRAIN_END} 沒有找到至少 "
+            f"{STRAT26_MIN_SAMPLES} 檔樣本股票的雙策略組合。"
             "</p>"
         )
 
     # ------------------------------------------------------------
-    # 策略 26：套用符合條件的高勝率組合到「最新交易日」選股。
-    # 一檔股票若同時命中多個高勝率組合，保留所有組合並以最佳組合勝率排序。
+    # 策略 26：把「09/01~09/30 → 10/08」回溯表的第一名組合，
+    # 套用到 10/08 當日訊號，產生回溯最佳組合選股。
     # ------------------------------------------------------------
     res26 = pd.DataFrame()
+    best_combo_text = "尚無最佳組合"
+    strat26_summary_html = (
+        "<p>尚未產生回溯最佳組合。</p>"
+    )
 
-    if not df_strat26_combo.empty:
-        current_signals = {}
-        for st_name, st_fn in strat26_candidates:
-            try:
-                sig0 = st_fn(0)
-                if sig0 is None:
-                    sig0 = pd.Series(False, index=df_merge.index)
-                current_signals[st_name] = sig0.reindex(df_merge.index).fillna(False).astype(bool)
-            except Exception:
-                current_signals[st_name] = pd.Series(False, index=df_merge.index)
+    if not df_strat26_combo.empty and target_k is not None:
+        best_combo = df_strat26_combo.iloc[0]
+        best_a = best_combo["策略A"]
+        best_b = best_combo["策略B"]
+        best_combo_text = str(best_combo["策略組合"])
+        strat26_summary_html = (
+            f"<p><b>⭐ 回溯最佳組合：</b>{best_combo_text}</p>"
+            f"<p>評分期間：<b>09/01~09/30</b> 找訊號，目標日：<b>10/08</b>。"
+            f"該組合共找到 <b>{int(best_combo['樣本股票數'])}</b> 檔樣本，"
+            f"10/08 平均漲幅 <b>{float(best_combo['10/08平均漲幅(%)']):.2f}%</b>、"
+            f"中位數 <b>{float(best_combo['10/08中位數漲幅(%)']):.2f}%</b>、"
+            f"上漲率 <b>{float(best_combo['10/08上漲率(%)']):.2f}%</b>。"
+            "下面再把這個最佳組合套用到 10/08 當日條件，列出符合的標的。</p>"
+        )
 
-        stock_combo_map = {}
-        for _, combo in df_strat26_combo.iterrows():
-            st_a = combo["策略A"]
-            st_b = combo["策略B"]
-            cur_mask = current_signals[st_a] & current_signals[st_b]
-            for idx in df_merge.index[cur_mask]:
-                code = str(df_merge.at[idx, "股票代號"])
-                stock_combo_map.setdefault(code, []).append({
-                    "組合": combo["策略組合"],
-                    "勝率": float(combo["30日隔日上漲率(%)"]),
-                    "平均報酬": float(combo["30日平均隔日報酬(%)"]),
-                    "樣本": int(combo["樣本數"])
-                })
+        sig_a = pd.Series(
+            strat26_signal_cache[best_a].get(target_k, np.zeros(len(df_merge), dtype=bool)),
+            index=df_merge.index
+        )
+        sig_b = pd.Series(
+            strat26_signal_cache[best_b].get(target_k, np.zeros(len(df_merge), dtype=bool)),
+            index=df_merge.index
+        )
+        best_mask = sig_a & sig_b
+        res26 = df_merge.loc[best_mask].copy()
 
-        rows26 = []
-        for code, combo_list in stock_combo_map.items():
-            combo_list = sorted(
-                combo_list,
-                key=lambda x: (x["勝率"], x["樣本"], x["平均報酬"]),
-                reverse=True
-            )
-            best = combo_list[0]
-            base = df_merge[df_merge["股票代號"] == code].iloc[0].copy()
-            base["最佳組合勝率(%)"] = best["勝率"]
-            base["最佳組合樣本數"] = best["樣本"]
-            base["命中高勝率組合數"] = len(combo_list)
-            base["最佳組合"] = best["組合"]
-            base["30日組合平均報酬(%)"] = best["平均報酬"]
-            base["全部命中組合"] = " | ".join(
-                f"{x['組合']}（{x['勝率']:.1f}%）" for x in combo_list[:8]
-            )
-            rows26.append(base)
+        res26["回溯最佳組合"] = best_combo_text
+        res26["回溯10/08平均漲幅(%)"] = float(best_combo["10/08平均漲幅(%)"])
+        res26["回溯10/08中位數漲幅(%)"] = float(best_combo["10/08中位數漲幅(%)"])
+        res26["回溯10/08上漲率(%)"] = float(best_combo["10/08上漲率(%)"])
+        res26["10/08實際漲幅(%)"] = target_return.loc[res26.index].round(2)
+        res26 = res26.sort_values(
+            by=["10/08實際漲幅(%)", "近10日漲幅(%)"], ascending=[False, False]
+        ).reset_index(drop=True)
 
-        if rows26:
-            res26 = pd.DataFrame(rows26)
-            res26 = res26.sort_values(
-                by=["最佳組合勝率(%)", "命中高勝率組合數", "最佳組合樣本數", "最新漲幅(%)"],
-                ascending=[False, False, False, False]
-            ).reset_index(drop=True)
-
-            res26 = res26.rename(columns={
-                "收盤價_1": f"{d1_s} 收盤",
-                "收盤價_0": f"{d0_s} 收盤",
-                "成交量_0": f"{d0_s} 量(張)"
-            })
-            cols26 = [
-                "⭐", "市場", "標的",
-                "最佳組合勝率(%)", "最佳組合樣本數", "命中高勝率組合數",
-                "最佳組合", "全部命中組合", "30日組合平均報酬(%)",
-                "近10日漲幅(%)", f"{d1_s} 收盤", f"{d0_s} 收盤",
-                "最新漲幅(%)", f"{d0_s} 量(張)"
-            ] + chip_cols
-
-            # 避免欄位因資料異常而中斷整頁產生。
-            cols26 = [c for c in cols26 if c in res26.columns]
-            html_tb26 = apply_color_formatting(
-                res26[cols26]
-            ).to_html(index=False, classes="styled-table sortable-table", escape=False)
-        else:
-            html_tb26 = "<p style='text-align:center;padding:14px;'>目前最新日沒有股票同時命中任何一組高勝率策略。</p>"
+        res26 = res26.rename(columns={
+            "收盤價_1": f"{d1_s} 收盤",
+            "收盤價_0": f"{d0_s} 收盤",
+            "成交量_0": f"{d0_s} 量(張)"
+        })
+        cols26 = [
+            "⭐", "市場", "標的", "回溯最佳組合",
+            "回溯10/08平均漲幅(%)", "回溯10/08中位數漲幅(%)", "回溯10/08上漲率(%)",
+            "10/08實際漲幅(%)", "近10日漲幅(%)",
+            f"{d1_s} 收盤", f"{d0_s} 收盤", f"{d0_s} 量(張)"
+        ] + chip_cols
+        cols26 = [c for c in cols26 if c in res26.columns]
+        html_tb26 = apply_color_formatting(res26[cols26]).to_html(
+            index=False, classes="styled-table sortable-table", escape=False
+        )
     else:
-        html_tb26 = "<p style='text-align:center;padding:14px;'>目前沒有可套用的高勝率策略組合。</p>"
+        html_tb26 = "<p style='text-align:center;padding:14px;'>目前無法建立回溯最佳組合選股。</p>"
 
     # 策略 12: 綜合排行
     st_lists = [
@@ -2099,7 +2126,7 @@ def main():
 
         <div class="tabs-wrapper" id="tabsHeader">
             <button class="tab-btn active" onclick="openStrategy(event, 'Strat12')">🌟 12. 綜合排行</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Strat26')">🧠 26. 30天高勝率組合</button>
+            <button class="tab-btn" onclick="openStrategy(event, 'Strat26')">🧠 26. 9月組合→10/8</button>
             <button class="tab-btn" onclick="openStrategy(event, 'Strat25')">💎 25. 倚強科模式複製</button>
             <button class="tab-btn" onclick="openStrategy(event, 'Strat24')">👑 24. 飆股基因起漲</button>
             <button class="tab-btn" onclick="openStrategy(event, 'Strat23')">🔥 23. 突破10日最大量</button>
@@ -2139,15 +2166,16 @@ def main():
 
             <div id="Strat26" class="tabcontent">
                 <div class="info-box">
-                    <p>🧠 <b>策略 26：30天高勝率策略組合</b> 將可做純歷史回測的策略兩兩配對，回測最近 30 個交易日「策略同時命中 ➜ 隔日收盤上漲」的勝率；只保留 <b>勝率 &gt; 80%</b> 且至少 <b>{STRAT26_MIN_SAMPLES} 個樣本</b> 的組合，再把這些高勝率組合套用到最新交易日選股。為避免資料穿越，18/19/24/25 的目前快照條件不納入組合挖掘。</p>
-                    <div class="count-badge">✅ 高勝率組合：<span id="count_Strat26_combo">{len(df_strat26_combo)}</span> 組　｜　最新日選股：<span id="count_Strat26">{len(res26)}</span> 檔</div>
+                    <p>🧠 <b>策略 26：09/01~09/30 策略組合 → 10/08</b>。先只用 9 月資料找出兩兩策略組合，再以這些組合曾選出的股票，觀察 10/08 的實際單日漲幅；組合依 <b>10/08 平均漲幅</b>、中位數、上漲率與樣本數排序，第一名即為回溯最佳組合，再套用到 10/08 當日產生選股。為避免資料穿越，18/19/24/25 的目前快照條件不納入組合挖掘。</p>
+                    <div class="count-badge">✅ 9月找到的策略組合：<span id="count_Strat26_combo">{len(df_strat26_combo)}</span> 組　｜　10/08 最佳組合選股：<span id="count_Strat26">{len(res26)}</span> 檔</div>
                 </div>
                 <div class="info-box">
-                    <p><b>高勝率組合排行</b></p>
+                    {strat26_summary_html}
+                    <p><b>09/01~09/30 策略組合 → 10/08 績效排行</b></p>
                     <div class="table-container">{html_tb26_combo}</div>
                 </div>
                 <div class="info-box">
-                    <p><b>最新日對應選股</b> 同一檔股票若命中多個高勝率組合，會保留多組證據，並以最佳組合勝率、命中組合數與樣本數排序。</p>
+                    <p><b>回溯最佳組合選股</b> 使用上方第一名組合，直接套用到 10/08 當日條件；表內「10/08實際漲幅」方便檢視這個回溯結果。</p>
                 </div>
                 <div class="table-container">{html_tb26}</div>
             </div>

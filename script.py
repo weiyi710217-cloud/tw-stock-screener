@@ -595,6 +595,10 @@ def main():
 
     vol_cols_60 = [col for col in df_merge.columns if col.startswith('成交量_') and int(col.split('_')[1]) <= 60]
     df_merge['60日最大量'] = df_merge[vol_cols_60].max(axis=1)
+
+    # 5MA 與 20MA
+    df_merge['5MA'] = df_merge[[f'收盤價_{j}' for j in range(5)]].mean(axis=1)
+    df_merge['20MA'] = df_merge[[f'收盤價_{j}' for j in range(20)]].mean(axis=1)
     
     def get_max_vol_high(row):
         try:
@@ -1329,37 +1333,30 @@ def main():
     cols23 = base_cols + ["近10日最大量日最高價", "增量倍數"] + chip_cols
     html_tb23 = apply_color_formatting(res23[cols23]).to_html(index=False, classes="styled-table sortable-table", escape=False)
 
-    # ==========================
-    # 【全新】策略 24: 飆股基因複製篩選器 (複製十天暴漲40%主力型態，鎖定5%~25%起漲甜蜜區)
-    # ==========================
+    # 策略 24
     def cond24_fn(k):
         c_k = df_merge[f'收盤價_{k}']
         c_10ago = df_merge[f'收盤價_{k+10}'] if f'收盤價_{k+10}' in df_merge else df_merge[f'收盤價_{k+9}']
         ret_10d = ((c_k - c_10ago) / c_10ago) * 100
-        # 1. 起漲甜蜜區：5% ~ 25% (未大漲但已啟動)
         sweet_zone = (ret_10d >= 5.0) & (ret_10d <= 25.0)
-        # 2. 近5日至少4天收紅 (強勢慣性)
         red_days = 0
         for j in range(5):
             c_curr = df_merge[f'收盤價_{k+j}']
             c_prev = df_merge[f'收盤價_{k+j+1}']
             red_days = red_days + (c_curr >= c_prev).astype(int)
         strong_red = red_days >= 4
-        # 3. 今日出量 1.2 倍
         vol_up = df_merge[f'成交量_{k}'] >= df_merge[f'成交量_{k+1}'] * 1.2
-        # 4. 主力大戶鎖定 (千張大戶 >= 35% 或 外資淨買超)
         whale_hold = (df_merge['千張大戶比例(%)'] >= 35.0) | (df_merge[f'外資_{k}'] > 0)
-        # 5. 投信近3日無賣出
         t_safe = (df_merge[f'投信_{k}'] >= 0) & (df_merge[f'投信_{k+1}'] >= 0) & (df_merge[f'投信_{k+2}'] >= 0)
         return sweet_zone & strong_red & vol_up & whale_hold & t_safe
 
     res24_hits = eval_rolling_condition(cond24_fn)
     cond24 = (
-        (df_merge['近10日漲幅(%)'] >= 5.0) & (df_merge['近10日漲幅(%)'] <= 25.0) & # 剛起漲
-        (df_merge['近5日紅盤'].isin(["4/5", "5/5"])) & # 強多頭慣性
-        (df_merge['成交量_0'] >= df_merge['成交量_1'] * 1.2) & # 今日出量
-        ((df_merge['千張大戶比例(%)'] >= 35.0) | (df_merge['外資近七日(張)'] > 0)) & # 主力鎖碼
-        (df_merge['投信_0'] >= 0) & (df_merge['投信_1'] >= 0) & (df_merge['投信_2'] >= 0) # 投信無賣壓
+        (df_merge['近10日漲幅(%)'] >= 5.0) & (df_merge['近10日漲幅(%)'] <= 25.0) &
+        (df_merge['近5日紅盤'].isin(["4/5", "5/5"])) &
+        (df_merge['成交量_0'] >= df_merge['成交量_1'] * 1.2) &
+        ((df_merge['千張大戶比例(%)'] >= 35.0) | (df_merge['外資近七日(張)'] > 0)) &
+        (df_merge['投信_0'] >= 0) & (df_merge['投信_1'] >= 0) & (df_merge['投信_2'] >= 0)
     )
     res24 = df_merge[cond24].copy()
     res24['近7日符合次數'] = res24_hits[cond24]
@@ -1369,7 +1366,45 @@ def main():
     cols24 = base_cols + ["千張大戶比例(%)", "增量倍數"] + chip_cols
     html_tb24 = apply_color_formatting(res24[cols24]).to_html(index=False, classes="styled-table sortable-table", escape=False)
 
-    # 策略 21 回測 (納入 22, 23, 24)
+    # ==========================
+    # 【全新】策略 25: 倚強科模式複製（大戶高鎖碼 + 短均線發散向上 + 出量突破）
+    # ==========================
+    def cond25_fn(k):
+        c_k = df_merge[f'收盤價_{k}']
+        c_prev = df_merge[f'收盤價_{k+1}']
+        c_10ago = df_merge[f'收盤價_{k+10}'] if f'收盤價_{k+10}' in df_merge else df_merge[f'收盤價_{k+9}']
+        ret_10d = ((c_k - c_10ago) / c_10ago) * 100
+        # 1. 大戶極致鎖碼 (千張大戶 >= 60%)
+        whale_locked = df_merge['千張大戶比例(%)'] >= 60.0
+        # 2. 均線發散：收盤價 > 5MA > 20MA
+        ma5_k = df_merge[[f'收盤價_{k+j}' for j in range(5)]].mean(axis=1)
+        ma20_k = df_merge[[f'收盤價_{k+j}' for j in range(20)]].mean(axis=1)
+        bullish_ma = (c_k > ma5_k) & (ma5_k > ma20_k)
+        # 3. 剛剛啟動出量：今日成交量 >= 昨日成交量 * 1.5
+        vol_surge = df_merge[f'成交量_{k}'] >= df_merge[f'成交量_{k+1}'] * 1.5
+        # 4. 處於起漲波段（近10日漲幅介於 3% ~ 25%）
+        launch_zone = (ret_10d >= 3.0) & (ret_10d <= 25.0)
+        # 5. 法人無賣壓（外資與投信近2日無大賣）
+        inst_safe = (df_merge[f'外資_{k}'] >= 0) | (df_merge[f'投信_{k}'] >= 0)
+        return whale_locked & bullish_ma & vol_surge & launch_zone & inst_safe
+
+    res25_hits = eval_rolling_condition(cond25_fn)
+    cond25 = (
+        (df_merge['千張大戶比例(%)'] >= 60.0) & # 大戶鎖碼
+        (df_merge['收盤價_0'] > df_merge['5MA']) & (df_merge['5MA'] > df_merge['20MA']) & # 均線發散多頭
+        (df_merge['成交量_0'] >= df_merge['成交量_1'] * 1.5) & # 出量 1.5 倍
+        (df_merge['近10日漲幅(%)'] >= 3.0) & (df_merge['近10日漲幅(%)'] <= 25.0) & # 剛起漲
+        ((df_merge['外資_0'] >= 0) | (df_merge['投信_0'] >= 0)) # 法人有買盤或無賣壓
+    )
+    res25 = df_merge[cond25].copy()
+    res25['近7日符合次數'] = res25_hits[cond25]
+    res25["增量倍數"] = (res25["成交量_0"] / res25["成交量_1"]).round(2)
+    res25 = res25.sort_values(by=["千張大戶比例(%)", "最新漲幅(%)"], ascending=[False, False])
+    res25 = res25.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
+    cols25 = base_cols + ["千張大戶比例(%)", "增量倍數"] + chip_cols
+    html_tb25 = apply_color_formatting(res25[cols25]).to_html(index=False, classes="styled-table sortable-table", escape=False)
+
+    # 策略 21 回測 (納入全部策略)
     print("🔬 正在執行過去 30 天各策略隔日勝率回測計算...")
     strategy_eval_funcs = [
         ("1.跳空不補", cond1_fn),
@@ -1393,7 +1428,8 @@ def main():
         ("20.外資越買越多出量", cond20_fn),
         ("22.高勝率基因複合", cond22_fn),
         ("23.突破10日最大量", cond23_fn),
-        ("24.飆股基因複製起漲", cond24_fn),
+        ("24.飆股基因起漲", cond24_fn),
+        ("25.倚強科模式複製", cond25_fn),
     ]
 
     backtest_records = []
@@ -1449,7 +1485,8 @@ def main():
         ("16.突破最大量高點", res16), ("17.創120日新高", res17),
         ("18.營收連三增啟動", res18), ("19.營收暴增1.5倍", res19),
         ("20.外資越買越多出量", res20), ("22.高勝率基因複合", res22),
-        ("23.突破10日最大量", res23), ("24.飆股基因起漲", res24)
+        ("23.突破10日最大量", res23), ("24.飆股基因起漲", res24),
+        ("25.倚強科模式複製", res25)
     ]
     
     hit_counts = {}
@@ -1843,6 +1880,7 @@ def main():
 
         <div class="tabs-wrapper" id="tabsHeader">
             <button class="tab-btn active" onclick="openStrategy(event, 'Strat12')">🌟 12. 綜合排行</button>
+            <button class="tab-btn" onclick="openStrategy(event, 'Strat25')">💎 25. 倚強科模式複製</button>
             <button class="tab-btn" onclick="openStrategy(event, 'Strat24')">👑 24. 飆股基因起漲</button>
             <button class="tab-btn" onclick="openStrategy(event, 'Strat23')">🔥 23. 突破10日最大量</button>
             <button class="tab-btn" onclick="openStrategy(event, 'Strat22')">🎯 22. 高勝率基因精選</button>
@@ -1877,6 +1915,14 @@ def main():
                     <div class="count-badge">✅ 前 50 名強勢標的</div>
                 </div>
                 <div class="table-container">{html_tb12}</div>
+            </div>
+
+            <div id="Strat25" class="tabcontent">
+                <div class="info-box">
+                    <p>🎯 <b>策略 25：倚強科模式複製</b> 複製倚強科(3219)大漲前夕特徵：1. 千張大戶比例 &ge; 60% (高鎖碼) | 2. 均線多頭發散 (收盤 > 5MA > 20MA) | 3. 今日出量 &ge; 1.5倍 | 4. 剛起漲區間 (近10日漲幅 3%~25%) | 5. 法人無賣壓。</p>
+                    <div class="count-badge">符合：<span id="count_Strat25">{len(res25)}</span> 檔</div>
+                </div>
+                <div class="table-container">{html_tb25}</div>
             </div>
 
             <div id="Strat24" class="tabcontent">
@@ -2526,7 +2572,7 @@ def main():
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(html_content)
 
-    print(f"\n✅ 策略 24（飆股基因複製篩選器）已生成！檔案: {html_filename}")
+    print(f"\n✅ 策略 25（倚強科模式複製）已成功加入！檔案: {html_filename}")
     if os.environ.get("GITHUB_ACTIONS") != "true":
         webbrowser.open(f"file:///{file_path}")
 

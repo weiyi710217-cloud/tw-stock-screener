@@ -1721,106 +1721,6 @@ def main():
     else:
         html_tb26 = "<p style='text-align:center;padding:14px;'>目前無法建立回溯最佳組合選股。</p>"
 
-    # ------------------------------------------------------------
-    # 策略 27~31：使用 09/01~09/30 回測得到的前五名最佳組合，
-    # 分別建立五套獨立選股策略，並各自套用到 10/08 當日。
-    # 排名沿用策略 26：10/08 平均漲幅 → 中位數 → 上漲率 → 樣本數。
-    # ------------------------------------------------------------
-    top5_combos = [] if df_strat26_combo.empty else df_strat26_combo.head(5).copy().reset_index(drop=True)
-    strat27_31_results = {}
-    strat27_31_html = {}
-    strat27_31_summary = {}
-
-    def build_top_combo_strategy_result(combo_row, strategy_no):
-        st_a = combo_row["策略A"]
-        st_b = combo_row["策略B"]
-        combo_text = str(combo_row["策略組合"])
-
-        if target_k is None:
-            return pd.DataFrame(), f"策略 {strategy_no} 無法建立：目標日資料不存在。", combo_text
-
-        sig_a = pd.Series(
-            strat26_signal_cache.get(st_a, {}).get(target_k, np.zeros(len(df_merge), dtype=bool)),
-            index=df_merge.index
-        )
-        sig_b = pd.Series(
-            strat26_signal_cache.get(st_b, {}).get(target_k, np.zeros(len(df_merge), dtype=bool)),
-            index=df_merge.index
-        )
-        mask = sig_a & sig_b
-        out = df_merge.loc[mask].copy()
-
-        out["回溯排名"] = int(combo_row["排名"])
-        out["回溯最佳組合"] = combo_text
-        out["回溯10/08平均漲幅(%)"] = float(combo_row["10/08平均漲幅(%)"])
-        out["回溯10/08中位數漲幅(%)"] = float(combo_row["10/08中位數漲幅(%)"])
-        out["回溯10/08上漲率(%)"] = float(combo_row["10/08上漲率(%)"])
-        out["回溯樣本股票數"] = int(combo_row["樣本股票數"])
-        out["10/08實際漲幅(%)"] = target_return.loc[out.index].round(2)
-        out = out.sort_values(
-            by=["10/08實際漲幅(%)", "近10日漲幅(%)"],
-            ascending=[False, False]
-        ).reset_index(drop=True)
-
-        out = out.rename(columns={
-            "收盤價_1": f"{d1_s} 收盤",
-            "收盤價_0": f"{d0_s} 收盤",
-            "成交量_0": f"{d0_s} 量(張)"
-        })
-        cols = [
-            "⭐", "市場", "標的", "回溯排名", "回溯最佳組合",
-            "回溯10/08平均漲幅(%)", "回溯10/08中位數漲幅(%)",
-            "回溯10/08上漲率(%)", "回溯樣本股票數", "10/08實際漲幅(%)",
-            "近10日漲幅(%)", f"{d1_s} 收盤", f"{d0_s} 收盤", f"{d0_s} 量(張)"
-        ] + chip_cols
-        cols = [c for c in cols if c in out.columns]
-
-        if out.empty:
-            summary = (
-                f"<p><b>回溯第 {int(combo_row['排名'])} 名組合：</b>{combo_text}</p>"
-                f"<p>09/01~09/30 找到此組合後，10/08 當日沒有股票同時符合兩個策略條件。</p>"
-            )
-        else:
-            actual = out["10/08實際漲幅(%)"].dropna()
-            actual_avg = float(actual.mean()) if len(actual) else float('nan')
-            actual_up = float((actual > 0).mean() * 100) if len(actual) else float('nan')
-            summary = (
-                f"<p><b>回溯第 {int(combo_row['排名'])} 名組合：</b>{combo_text}</p>"
-                f"<p>09/01~09/30 回溯樣本 <b>{int(combo_row['樣本股票數'])}</b> 檔；"
-                f"10/08 歷史平均漲幅 <b>{float(combo_row['10/08平均漲幅(%)']):.2f}%</b>、"
-                f"中位數 <b>{float(combo_row['10/08中位數漲幅(%)']):.2f}%</b>、"
-                f"上漲率 <b>{float(combo_row['10/08上漲率(%)']):.2f}%</b>。"
-                f"套用到 10/08 當日後，共選出 <b>{len(out)}</b> 檔，"
-                f"這些標的 10/08 實際平均漲幅為 <b>{actual_avg:.2f}%</b>，上漲率 <b>{actual_up:.2f}%</b>。</p>"
-            )
-        return out, summary, combo_text, cols
-
-    for i in range(5):
-        strategy_no = 27 + i
-        if i < len(top5_combos):
-            combo_row = top5_combos.iloc[i]
-            result, summary, combo_text, result_cols = build_top_combo_strategy_result(combo_row, strategy_no)
-            strat27_31_results[strategy_no] = result
-            strat27_31_summary[strategy_no] = summary
-            if result.empty:
-                strat27_31_html[strategy_no] = "<p style='text-align:center;padding:14px;'>10/08 當日沒有符合此最佳組合的股票。</p>"
-            else:
-                strat27_31_html[strategy_no] = apply_color_formatting(result[result_cols]).to_html(
-                    index=False, classes="styled-table sortable-table", escape=False
-                )
-        else:
-            strat27_31_results[strategy_no] = pd.DataFrame()
-            strat27_31_summary[strategy_no] = (
-                f"<p><b>策略 {strategy_no}</b>：9 月回溯不足 5 組最佳組合，因此目前無對應策略。</p>"
-            )
-            strat27_31_html[strategy_no] = "<p style='text-align:center;padding:14px;'>目前沒有足夠的回溯組合。</p>"
-
-    res27 = strat27_31_results[27]
-    res28 = strat27_31_results[28]
-    res29 = strat27_31_results[29]
-    res30 = strat27_31_results[30]
-    res31 = strat27_31_results[31]
-
     # 策略 12: 綜合排行
     st_lists = [
         ("1.跳空", res1), ("2.墊高", res2), ("3.量增法人", res3),
@@ -2227,11 +2127,6 @@ def main():
         <div class="tabs-wrapper" id="tabsHeader">
             <button class="tab-btn active" onclick="openStrategy(event, 'Strat12')">🌟 12. 綜合排行</button>
             <button class="tab-btn" onclick="openStrategy(event, 'Strat26')">🧠 26. 9月組合→10/8</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Strat27')">🏆 27. 第1名組合</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Strat28')">🥈 28. 第2名組合</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Strat29')">🥉 29. 第3名組合</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Strat30')">⭐ 30. 第4名組合</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Strat31')">⭐ 31. 第5名組合</button>
             <button class="tab-btn" onclick="openStrategy(event, 'Strat25')">💎 25. 倚強科模式複製</button>
             <button class="tab-btn" onclick="openStrategy(event, 'Strat24')">👑 24. 飆股基因起漲</button>
             <button class="tab-btn" onclick="openStrategy(event, 'Strat23')">🔥 23. 突破10日最大量</button>
@@ -2283,61 +2178,6 @@ def main():
                     <p><b>回溯最佳組合選股</b> 使用上方第一名組合，直接套用到 10/08 當日條件；表內「10/08實際漲幅」方便檢視這個回溯結果。</p>
                 </div>
                 <div class="table-container">{html_tb26}</div>
-            </div>
-
-            <div id="Strat27" class="tabcontent">
-                <div class="info-box">
-                    <p>🏆 <b>策略 27：第1名最佳組合</b>。使用策略 26 在 <b>09/01~09/30</b> 回溯後，以 <b>10/08 平均漲幅</b> 排序得到的第 1 名策略組合；將該兩策略同時套用到 10/08 當日選股。</p>
-                    <div class="count-badge">符合：<span id="count_Strat27">{len(res27)}</span> 檔</div>
-                </div>
-                <div class="info-box">
-                    {strat27_31_summary[27]}
-                </div>
-                <div class="table-container">{strat27_31_html[27]}</div>
-            </div>
-
-            <div id="Strat28" class="tabcontent">
-                <div class="info-box">
-                    <p>🥈 <b>策略 28：第2名最佳組合</b>。使用策略 26 在 <b>09/01~09/30</b> 回溯後，以 <b>10/08 平均漲幅</b> 排序得到的第 2 名策略組合；將該兩策略同時套用到 10/08 當日選股。</p>
-                    <div class="count-badge">符合：<span id="count_Strat28">{len(res28)}</span> 檔</div>
-                </div>
-                <div class="info-box">
-                    {strat27_31_summary[28]}
-                </div>
-                <div class="table-container">{strat27_31_html[28]}</div>
-            </div>
-
-            <div id="Strat29" class="tabcontent">
-                <div class="info-box">
-                    <p>🥉 <b>策略 29：第3名最佳組合</b>。使用策略 26 在 <b>09/01~09/30</b> 回溯後，以 <b>10/08 平均漲幅</b> 排序得到的第 3 名策略組合；將該兩策略同時套用到 10/08 當日選股。</p>
-                    <div class="count-badge">符合：<span id="count_Strat29">{len(res29)}</span> 檔</div>
-                </div>
-                <div class="info-box">
-                    {strat27_31_summary[29]}
-                </div>
-                <div class="table-container">{strat27_31_html[29]}</div>
-            </div>
-
-            <div id="Strat30" class="tabcontent">
-                <div class="info-box">
-                    <p>⭐ <b>策略 30：第4名最佳組合</b>。使用策略 26 在 <b>09/01~09/30</b> 回溯後，以 <b>10/08 平均漲幅</b> 排序得到的第 4 名策略組合；將該兩策略同時套用到 10/08 當日選股。</p>
-                    <div class="count-badge">符合：<span id="count_Strat30">{len(res30)}</span> 檔</div>
-                </div>
-                <div class="info-box">
-                    {strat27_31_summary[30]}
-                </div>
-                <div class="table-container">{strat27_31_html[30]}</div>
-            </div>
-
-            <div id="Strat31" class="tabcontent">
-                <div class="info-box">
-                    <p>⭐ <b>策略 31：第5名最佳組合</b>。使用策略 26 在 <b>09/01~09/30</b> 回溯後，以 <b>10/08 平均漲幅</b> 排序得到的第 5 名策略組合；將該兩策略同時套用到 10/08 當日選股。</p>
-                    <div class="count-badge">符合：<span id="count_Strat31">{len(res31)}</span> 檔</div>
-                </div>
-                <div class="info-box">
-                    {strat27_31_summary[31]}
-                </div>
-                <div class="table-container">{strat27_31_html[31]}</div>
             </div>
 
             <div id="Strat25" class="tabcontent">

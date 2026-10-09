@@ -660,7 +660,8 @@ def main():
     df_merge['投信近七日(張)'] = df_merge[[f'投信_{i}' for i in range(7)]].sum(axis=1)
     df_merge['外資近一月(張)'] = df_merge[[f'外資_{i}' for i in range(20)]].sum(axis=1)
 
-    # 統一在主表初始化計算所有衍生欄位，並加入 data-code 以供前端 Favorites 功能使用
+    # 統一在主表初始化計算所有衍生欄位，並加入預設值 "近7日符合次數"
+    df_merge['近7日符合次數'] = "-"
     df_merge['最新法人買超(張)'] = (df_merge['外資_0'] + df_merge['投信_0']).round(0)
     df_merge['增量倍數'] = (df_merge['成交量_0'] / df_merge['成交量_1'].replace(0, np.nan)).round(2).fillna(0.0)
     df_merge['實體K漲幅(%)'] = (((df_merge['收盤價_0'] - df_merge['開盤價_0']) / df_merge['開盤價_0'].replace(0, np.nan)) * 100).round(2).fillna(0.0)
@@ -2212,7 +2213,7 @@ def main():
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(html_content)
 
-    print(f"\n✅ 最愛清單功能 (LocalStorage) 已實作完成！檔案已生成: {html_filename}")
+    print(f"\n✅ 修正完成！「我的最愛」表格報錯已解決。檔案已生成: {html_filename}")
     if os.environ.get("GITHUB_ACTIONS") != "true":
         webbrowser.open(f"file:///{file_path}")
 

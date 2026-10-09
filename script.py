@@ -660,7 +660,7 @@ def main():
     df_merge['投信近七日(張)'] = df_merge[[f'投信_{i}' for i in range(7)]].sum(axis=1)
     df_merge['外資近一月(張)'] = df_merge[[f'外資_{i}' for i in range(20)]].sum(axis=1)
 
-    # 統一在主表初始化計算所有可能排序或呈現的衍生欄位，杜絕 KeyError
+    # 統一初始化計算衍生指標，防止任何潛在 KeyError
     df_merge['最新法人買超(張)'] = (df_merge['外資_0'] + df_merge['投信_0']).round(0)
     df_merge['增量倍數'] = (df_merge['成交量_0'] / df_merge['成交量_1'].replace(0, np.nan)).round(2).fillna(0.0)
     df_merge['實體K漲幅(%)'] = (((df_merge['收盤價_0'] - df_merge['開盤價_0']) / df_merge['開盤價_0'].replace(0, np.nan)) * 100).round(2).fillna(0.0)
@@ -854,7 +854,7 @@ def main():
                 df_out[col_name] = df_out[col_name].apply(color_pct)
         return df_out
 
-    # 基礎策略條件函式
+    # 基礎策略函式定義
     def cond1_fn(k):
         l_k, c_prev = df_merge[f'最低價_{k}'], df_merge[f'收盤價_{k+1}']
         v_k, v_prev = df_merge[f'成交量_{k}'], df_merge[f'成交量_{k+1}']
@@ -1051,12 +1051,11 @@ def main():
         inst_safe = (df_merge[f'外資_{k}'] >= 0) | (df_merge[f'投信_{k}'] >= 0)
         return whale_locked & bullish_ma & vol_surge & launch_zone & inst_safe
 
-    # 執行個別策略 DataFrame 產出（安全防錯）
+    # 封裝單一策略資料表生成器
     def build_res(cond_fn, sort_cols, asc_list, rename_dict=None, extra_cols=None):
         cond = cond_fn(0)
         res = df_merge[cond].copy()
         res['近7日符合次數'] = eval_rolling_condition(cond_fn)[cond]
-        # 篩選排序欄位，確保存在的欄位才進行排序
         valid_sort_cols = [c for c in sort_cols if c in res.columns]
         valid_asc_list = [asc_list[i] for i, c in enumerate(sort_cols) if c in res.columns]
         if valid_sort_cols:
@@ -1095,31 +1094,16 @@ def main():
     res24, html_tb24 = build_res(cond24_fn, ["最新漲幅(%)", "增量倍數"], [False, False], std_rename, ["千張大戶比例(%)", "增量倍數"])
     res25, html_tb25 = build_res(cond25_fn, ["千張大戶比例(%)", "最新漲幅(%)"], [False, False], std_rename, ["千張大戶比例(%)", "增量倍數"])
 
-    # ========================================================
-    # 【升級】策略 26: 9 月三策略組合挖掘回測 (任選三組，排除 18, 19, 24, 25)
-    # ========================================================
-    print("🔬 啟動策略 26：9 月 (2026/09/01~2026/09/30) 三策略組合高勝率回測...")
-
+    # 策略 26: 9 月三策略組合挖掘回測
+    print("🔬 啟動策略 26：9 月三策略組合高勝率回測...")
     cand_strategies = [
-        ("1.跳空不補", cond1_fn),
-        ("2.連續墊高", cond2_fn),
-        ("3.量增法人買", cond3_fn),
-        ("4.創20日新高", cond4_fn),
-        ("5.旱地拔蔥", cond5_fn),
-        ("6.創五日高", cond6_fn),
-        ("7.20日高不賣", cond7_fn),
-        ("8.連日墊高", cond8_fn),
-        ("9.多重濾網", cond9_fn),
-        ("10.上櫃強勢", cond10_fn),
-        ("11.上櫃紅K", cond11_fn),
-        ("13.逼近60日高", cond13_fn),
-        ("14.創20日高不賣", cond14_fn),
-        ("15.壓縮突破60日", cond15_fn),
-        ("16.最大量高點", cond16_fn),
-        ("17.創120日高", cond17_fn),
-        ("20.外資越買越多出量", cond20_fn),
-        ("22.高勝率基因複合", cond22_fn),
-        ("23.突破10日最大量", cond23_fn),
+        ("1.跳空不補", cond1_fn), ("2.連續墊高", cond2_fn), ("3.量增法人買", cond3_fn),
+        ("4.創20日新高", cond4_fn), ("5.旱地拔蔥", cond5_fn), ("6.創五日高", cond6_fn),
+        ("7.20日高不賣", cond7_fn), ("8.連日墊高", cond8_fn), ("9.多重濾網", cond9_fn),
+        ("10.上櫃強勢", cond10_fn), ("11.上櫃紅K", cond11_fn), ("13.逼近60日高", cond13_fn),
+        ("14.創20日高不賣", cond14_fn), ("15.壓縮突破60日", cond15_fn), ("16.最大量高點", cond16_fn),
+        ("17.創120日高", cond17_fn), ("20.外資越買越多出量", cond20_fn),
+        ("22.高勝率基因複合", cond22_fn), ("23.突破10日最大量", cond23_fn),
     ]
 
     sept_indices = [i for i, (d, _) in enumerate(days_data) if "20260901" <= d <= "20260930"]
@@ -1136,7 +1120,6 @@ def main():
     col_open_1001 = f"開盤價_{idx_1001}" if f"開盤價_{idx_1001}" in df_merge.columns else f"收盤價_{idx_1001}"
     col_close_1008 = f"收盤價_{idx_1008}"
 
-    # 極速向量化預算：每個策略在 9 月的 (N, D) 布林矩陣
     N = len(df_merge)
     D = len(sept_indices)
     strat_matrices = {}
@@ -1151,19 +1134,16 @@ def main():
                 pass
         strat_matrices[st_name] = mat
 
-    # 預算 10/01 開盤 至 10/08 收盤的實際報酬
     open_1001 = pd.to_numeric(df_merge[col_open_1001], errors='coerce').values
     close_1008 = pd.to_numeric(df_merge[col_close_1008], errors='coerce').values
     valid_ret_mask = (open_1001 > 0) & (close_1008 > 0) & np.isfinite(open_1001) & np.isfinite(close_1008)
     returns_arr = np.zeros(N, dtype=float)
     returns_arr[valid_ret_mask] = ((close_1008[valid_ret_mask] - open_1001[valid_ret_mask]) / open_1001[valid_ret_mask]) * 100
 
-    # 窮舉三策略組合（969組）
     combo_triplets = list(itertools.combinations(cand_strategies, 3))
     combo_records = []
 
     for (name_a, fn_a), (name_b, fn_b), (name_c, fn_c) in combo_triplets:
-        # 9 月期間任一天三策略同時命中
         hit_mask = (strat_matrices[name_a] & strat_matrices[name_b] & strat_matrices[name_c]).any(axis=1)
         sub_mask = hit_mask & valid_ret_mask
         n_samples = int(np.sum(sub_mask))
@@ -1177,12 +1157,8 @@ def main():
         median_ret = round(float(np.median(sub_ret)), 2)
 
         combo_records.append({
-            "name_a": name_a,
-            "name_b": name_b,
-            "name_c": name_c,
-            "fn_a": fn_a,
-            "fn_b": fn_b,
-            "fn_c": fn_c,
+            "name_a": name_a, "name_b": name_b, "name_c": name_c,
+            "fn_a": fn_a, "fn_b": fn_b, "fn_c": fn_c,
             "策略組合": f"{name_a} ＋ {name_b} ＋ {name_c}",
             "上漲率(%)": win_rate,
             "平均漲幅(%)": mean_ret,
@@ -1193,7 +1169,6 @@ def main():
         })
 
     df_combos = pd.DataFrame(combo_records)
-    # 優先以上漲率（勝率）最高排序，次排平均漲幅、中位數、樣本數
     if not df_combos.empty:
         df_combos = df_combos.sort_values(
             by=["上漲率(%)", "平均漲幅(%)", "中位數漲幅(%)", "樣本數"],
@@ -1207,12 +1182,9 @@ def main():
     df_combos_show["上漲率(%)"] = df_combos_show["上漲率(%)"].apply(lambda x: f"<b style='color:#dc2626;'>{x:.2f}%</b>" if x >= 50 else f"<span style='color:#16a34a;'>{x:.2f}%</span>")
     df_combos_show["平均漲幅(%)"] = df_combos_show["平均漲幅(%)"].apply(color_pct)
     df_combos_show["中位數漲幅(%)"] = df_combos_show["中位數漲幅(%)"].apply(color_pct)
-
     html_tb26 = df_combos_show.to_html(index=False, classes="styled-table backtest-table sortable-table", escape=False)
 
-    # ========================================================
-    # 【建立策略 27~31】使用勝率前五名搭配，並以「最新收盤日」挑選建議股票
-    # ========================================================
+    # 建立策略 27~31
     top5_combos = df_combos.head(5).to_dict("records")
     strat_results_27_31 = {}
     rank_labels = ["首選", "第二", "第三", "第四", "第五"]
@@ -1222,7 +1194,6 @@ def main():
             item = top5_combos[idx]
             c_name = item["策略組合"]
             f_a, f_b, f_c = item["fn_a"], item["fn_b"], item["fn_c"]
-            # 最新日（k=0）同時符合此三策略
             cond_today = f_a(0) & f_b(0) & f_c(0)
             res_df = df_merge[cond_today].copy()
             res_df['近7日符合次數'] = eval_rolling_condition(lambda k: f_a(k) & f_b(k) & f_c(k))[cond_today]
@@ -1233,35 +1204,31 @@ def main():
             if not res_df.empty:
                 table_html = apply_color_formatting(res_df[base_cols + ["增量倍數"] + chip_cols]).to_html(index=False, classes="styled-table sortable-table", escape=False)
             else:
-                table_html = "<div style='padding: 30px; text-align: center; color: #64748b; font-size: 13px;'>今日最新盤後無同時符合此三策略之股票（可持續追蹤該組合條件）</div>"
+                table_html = "<div style='padding: 30px; text-align: center; color: #64748b; font-size: 13px;'>今日最新盤後無同時符合此三策略之股票</div>"
 
             strat_results_27_31[r_num] = {
-                "name": f"{r_num}. 組合{rank_labels[idx]} ({c_name})",
-                "short_name": f"{r_num}. 組合{rank_labels[idx]}",
+                "name": f"{r_num}. 組合{rank_labels[idx]}",
                 "combo_name": c_name,
                 "df": res_df,
                 "html": table_html,
                 "count": len(res_df),
                 "win_rate": item["上漲率(%)"],
                 "avg_ret": item["平均漲幅(%)"],
-                "median_ret": item["中位數漲幅(%)"],
                 "samples": item["樣本數"]
             }
         else:
             strat_results_27_31[r_num] = {
                 "name": f"{r_num}. 組合{rank_labels[idx]}",
-                "short_name": f"{r_num}. 組合{rank_labels[idx]}",
                 "combo_name": "無足夠樣本",
                 "df": pd.DataFrame(),
                 "html": "<p style='text-align:center;'>目前無符合股票</p>",
                 "count": 0,
                 "win_rate": 0.0,
                 "avg_ret": 0.0,
-                "median_ret": 0.0,
                 "samples": 0
             }
 
-    # 策略 21：單策略歷史隔日勝率回測
+    # 策略 21：單策略回測
     print("🔬 正在執行過去 30 天單策略隔日勝率回測計算...")
     backtest_funcs = [
         ("1.跳空不補", cond1_fn), ("2.連續墊高", cond2_fn), ("3.量增法人買", cond3_fn),
@@ -1307,7 +1274,7 @@ def main():
     df_strat21_show["隔日平均報酬(%)"] = df_strat21_show["隔日平均報酬(%)"].apply(color_pct)
     html_tb21 = df_strat21_show.to_html(index=False, classes="styled-table backtest-table sortable-table", escape=False)
 
-    # 策略 12: 綜合排行 (納入 1~11, 13~20, 22~25, 27~31)
+    # 策略 12: 綜合排行
     st_lists = [
         ("1.跳空", res1), ("2.墊高", res2), ("3.量增法人", res3),
         ("4.創20日高", res4), ("5.拔蔥", res5), ("6.五日高", res6),
@@ -1347,7 +1314,7 @@ def main():
     else:
         html_tb12 = "<p style='text-align:center;'>目前無任何股票入選預設策略</p>"
 
-    # 可收合警告
+    # 系統警告折疊區
     warning_html = ""
     if WARNINGS:
         unique_warns = sorted(set(WARNINGS))
@@ -1423,6 +1390,7 @@ def main():
                 opacity: 0.85;
             }}
 
+            /* 單列滑動導覽標籤 */
             .tabs-wrapper {{
                 background: white;
                 border-bottom: 1px solid var(--border);
@@ -1500,6 +1468,20 @@ def main():
             .warning-body ul {{ margin: 4px 0 0 16px; padding: 0; }}
             .warning-body li {{ margin-bottom: 2px; }}
 
+            .module-nav-box {{
+                background: var(--card-bg);
+                border-radius: 8px;
+                padding: 8px 12px;
+                margin-bottom: 8px;
+                border: 1px solid var(--border);
+                box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                flex-wrap: wrap;
+                gap: 8px;
+            }}
+
             .info-box {{
                 background: var(--card-bg);
                 border-radius: 8px;
@@ -1530,6 +1512,17 @@ def main():
                 font-weight: 700;
                 font-size: 12px;
                 margin-top: 6px;
+            }}
+
+            .custom-select {{
+                padding: 5px 10px;
+                font-size: 12px;
+                font-weight: 600;
+                border-radius: 6px;
+                border: 1px solid #cbd5e1;
+                background-color: white;
+                color: var(--text);
+                outline: none;
             }}
 
             .table-container {{
@@ -1584,7 +1577,6 @@ def main():
                 border-bottom: none;
             }}
 
-            /* 股票表格前兩欄固定 */
             .styled-table:not(.backtest-table) th:nth-child(1),
             .styled-table:not(.backtest-table) td:nth-child(1) {{
                 position: sticky;
@@ -1617,7 +1609,6 @@ def main():
                 background-color: #ffffff;
             }}
 
-            /* 策略 21, 26 專屬樣式：不套用 position:sticky 避免遮擋第一欄 */
             .backtest-table th, .backtest-table td {{
                 position: static !important;
                 box-shadow: none !important;
@@ -1685,6 +1676,7 @@ def main():
             .fav-star.active {{ color: var(--star); font-weight: bold; }}
 
             .tabcontent {{ display: none; }}
+            .sub-tab-content {{ display: none; }}
         </style>
     </head>
     <body>
@@ -1694,43 +1686,22 @@ def main():
         </div>
 
         <div class="tabs-wrapper" id="tabsHeader">
-            <button class="tab-btn active" onclick="openStrategy(event, 'Strat12')">🌟 12. 綜合排行</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Strat26')">🧪 26. 9月三組合回測</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Strat27')">🏆 27. 組合首選</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Strat28')">🥈 28. 組合第二</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Strat29')">🥉 29. 組合第三</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Strat30')">🎖 30. 組合第四</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Strat31')">🎖 31. 組合第五</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Strat25')">💎 25. 倚強科模式複製</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Strat24')">👑 24. 飆股基因起漲</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Strat23')">🔥 23. 突破10日最大量</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Strat22')">🎯 22. 高勝率基因精選</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Strat21')">📊 21. 隔日勝率統計</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Strat20')">🚀 20. 外資越買越多出量</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Strat19')">⚡ 19. 營收暴增1.5倍</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Strat18')">💎 18. 營收三連增啟動</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Strat17')">🏆 17. 創120日高</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Strat16')">🔥 16. 最大量高點</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Strat15')">🚀 15. 壓縮突破60日</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Strat14')">🚀 14. 創20日高不賣</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Strat13')">📈 13. 逼近60日高</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Strat1')">1. 跳空不補</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Strat2')">2. 連續墊高</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Strat3')">3. 量增法人買</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Strat4')">4. 創20日新高</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Strat5')">5. 旱地拔蔥</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Strat6')">6. 創五日高</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Strat7')">7. 20日高不賣</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Strat8')">8. 連日墊高</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Strat9')">9. 多重濾網</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Strat10')">10. 上櫃強勢</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Strat11')">11. 上櫃紅K</button>
+            <button class="tab-btn active" onclick="openStrategy(event, 'Tab_Strat12')">🌟 綜合排行</button>
+            <button class="tab-btn" onclick="openStrategy(event, 'Tab_TopCombos')">🎖 最佳回測組合</button>
+            <button class="tab-btn" onclick="openStrategy(event, 'Tab_Breakout')">🏆 創高突破</button>
+            <button class="tab-btn" onclick="openStrategy(event, 'Tab_MaxVol')">🔥 天量突破</button>
+            <button class="tab-btn" onclick="openStrategy(event, 'Tab_StepGap')">📈 墊高跳空</button>
+            <button class="tab-btn" onclick="openStrategy(event, 'Tab_Whale')">👑 主力鎖碼</button>
+            <button class="tab-btn" onclick="openStrategy(event, 'Tab_Revenue')">💎 營收動能</button>
+            <button class="tab-btn" onclick="openStrategy(event, 'Tab_Inst')">🚀 法人動能</button>
+            <button class="tab-btn" onclick="openStrategy(event, 'Tab_OTC')">🎯 上櫃強勢</button>
+            <button class="tab-btn" onclick="openStrategy(event, 'Tab_Backtest')">📊 量化回測總覽</button>
         </div>
 
         <div class="container">
             {warning_html}
 
-            <div id="Strat12" class="tabcontent" style="display: block;">
+            <div id="Tab_Strat12" class="tabcontent" style="display: block;">
                 <div class="info-box">
                     <p>🎯 <b>選股邏輯：</b> 統計所有策略預設條件下，選中最多次的股票排序。</p>
                     <div class="count-badge">✅ 前 50 名強勢標的</div>
@@ -1738,89 +1709,227 @@ def main():
                 <div class="table-container">{html_tb12}</div>
             </div>
 
-            <div id="Strat26" class="tabcontent">
-                <div class="info-box">
-                    <p>🎯 <b>策略 26：9 月三策略組合挖掘回測框架</b></p>
-                    <p>回測 2026/09/01～2026/09/30 期間任三策略同時命中之個股，以 <b>10/01 開盤至 10/08 收盤</b> 計算實際績效，依上漲機率（勝率）最高前五名搭配自動建構策略 27~31（排除 18, 19, 24, 25 避免快照未來資訊）。</p>
-                    <div class="count-badge">📊 969 組三策略搭配排序總覽</div>
+            <div id="Tab_TopCombos" class="tabcontent">
+                <div class="module-nav-box">
+                    <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇回測最佳組合：</span>
+                    <select class="custom-select" onchange="switchSubTab('Tab_TopCombos', this.value)">
+                        <option value="sub_strat27" selected>27. 組合首選 (勝率 {strat_results_27_31[27]["win_rate"]}%)</option>
+                        <option value="sub_strat28">28. 組合第二 (勝率 {strat_results_27_31[28]["win_rate"]}%)</option>
+                        <option value="sub_strat29">29. 組合第三 (勝率 {strat_results_27_31[29]["win_rate"]}%)</option>
+                        <option value="sub_strat30">30. 組合第四 (勝率 {strat_results_27_31[30]["win_rate"]}%)</option>
+                        <option value="sub_strat31">31. 組合第五 (勝率 {strat_results_27_31[31]["win_rate"]}%)</option>
+                    </select>
                 </div>
-                <div class="table-container">{html_tb26}</div>
+                <div id="sub_strat27" class="sub-tab-content" style="display:block;">
+                    <div class="info-box"><p><b>三策略搭配：</b> {strat_results_27_31[27]["combo_name"]}</p><p><b>歷史表現：</b> 上漲率 <b>{strat_results_27_31[27]["win_rate"]}%</b> | 平均漲幅 {strat_results_27_31[27]["avg_ret"]}% | 樣本數 {strat_results_27_31[27]["samples"]} 檔</p><div class="count-badge">今日符合：{strat_results_27_31[27]["count"]} 檔</div></div>
+                    <div class="table-container">{strat_results_27_31[27]["html"]}</div>
+                </div>
+                <div id="sub_strat28" class="sub-tab-content">
+                    <div class="info-box"><p><b>三策略搭配：</b> {strat_results_27_31[28]["combo_name"]}</p><p><b>歷史表現：</b> 上漲率 <b>{strat_results_27_31[28]["win_rate"]}%</b> | 平均漲幅 {strat_results_27_31[28]["avg_ret"]}% | 樣本數 {strat_results_27_31[28]["samples"]} 檔</p><div class="count-badge">今日符合：{strat_results_27_31[28]["count"]} 檔</div></div>
+                    <div class="table-container">{strat_results_27_31[28]["html"]}</div>
+                </div>
+                <div id="sub_strat29" class="sub-tab-content">
+                    <div class="info-box"><p><b>三策略搭配：</b> {strat_results_27_31[29]["combo_name"]}</p><p><b>歷史表現：</b> 上漲率 <b>{strat_results_27_31[29]["win_rate"]}%</b> | 平均漲幅 {strat_results_27_31[29]["avg_ret"]}% | 樣本數 {strat_results_27_31[29]["samples"]} 檔</p><div class="count-badge">今日符合：{strat_results_27_31[29]["count"]} 檔</div></div>
+                    <div class="table-container">{strat_results_27_31[29]["html"]}</div>
+                </div>
+                <div id="sub_strat30" class="sub-tab-content">
+                    <div class="info-box"><p><b>三策略搭配：</b> {strat_results_27_31[30]["combo_name"]}</p><p><b>歷史表現：</b> 上漲率 <b>{strat_results_27_31[30]["win_rate"]}%</b> | 平均漲幅 {strat_results_27_31[30]["avg_ret"]}% | 樣本數 {strat_results_27_31[30]["samples"]} 檔</p><div class="count-badge">今日符合：{strat_results_27_31[30]["count"]} 檔</div></div>
+                    <div class="table-container">{strat_results_27_31[30]["html"]}</div>
+                </div>
+                <div id="sub_strat31" class="sub-tab-content">
+                    <div class="info-box"><p><b>三策略搭配：</b> {strat_results_27_31[31]["combo_name"]}</p><p><b>歷史表現：</b> 上漲率 <b>{strat_results_27_31[31]["win_rate"]}%</b> | 平均漲幅 {strat_results_27_31[31]["avg_ret"]}% | 樣本數 {strat_results_27_31[31]["samples"]} 檔</p><div class="count-badge">今日符合：{strat_results_27_31[31]["count"]} 檔</div></div>
+                    <div class="table-container">{strat_results_27_31[31]["html"]}</div>
+                </div>
             </div>
 
-            <div id="Strat27" class="tabcontent">
-                <div class="info-box">
-                    <p>🎯 <b>策略 27：9 月組合首選 ➔ 最新選股建議</b></p>
-                    <p><b>三策略搭配：</b> {strat_results_27_31[27]["combo_name"]}</p>
-                    <p><b>歷史表現：</b> 上漲率 <b>{strat_results_27_31[27]["win_rate"]}%</b> | 平均漲幅 {strat_results_27_31[27]["avg_ret"]}% | 樣本數 {strat_results_27_31[27]["samples"]} 檔</p>
-                    <div class="count-badge">今日符合：<span id="count_Strat27">{strat_results_27_31[27]["count"]}</span> 檔</div>
+            <div id="Tab_Breakout" class="tabcontent">
+                <div class="module-nav-box">
+                    <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇創高週期與條件：</span>
+                    <select class="custom-select" onchange="switchSubTab('Tab_Breakout', this.value)">
+                        <option value="sub_strat17" selected>17. 創 120 日半年新高</option>
+                        <option value="sub_strat4">4. 創 20 日新高 ＋ 投信連七不賣</option>
+                        <option value="sub_strat6">6. 創 5 日高 ＋ 跳空量增 ＋ 法人連三</option>
+                        <option value="sub_strat7">7. 創 20 日高 ＋ 底底高 ＋ 法人連七</option>
+                        <option value="sub_strat13">13. 逼近 60 日高 (-2%以內)</option>
+                        <option value="sub_strat14">14. 創 20 日高 ＋ 法人七日不賣</option>
+                        <option value="sub_strat15">15. 壓縮突破 60 日高</option>
+                        <option value="sub_strat9">9. 多重濾網 (漲幅+創高+大戶)</option>
+                    </select>
                 </div>
-                <div class="table-container">{strat_results_27_31[27]["html"]}</div>
+                <div id="sub_strat17" class="sub-tab-content" style="display:block;">
+                    <div class="info-box"><p>🎯 最新收盤價大於過去 120 個交易日內每一天的收盤價 (半年新高)。</p><div class="count-badge">符合：{len(res17)} 檔</div></div>
+                    <div class="table-container">{html_tb17}</div>
+                </div>
+                <div id="sub_strat4" class="sub-tab-content">
+                    <div class="info-box"><p>🎯 創 20 日新高、過去七天投信不賣、量大於前一日。</p><div class="count-badge">符合：{len(res4)} 檔</div></div>
+                    <div class="table-container">{html_tb4}</div>
+                </div>
+                <div id="sub_strat6" class="sub-tab-content">
+                    <div class="info-box"><p>🎯 創五日新高 & 跳空量增 & 法人連三日不賣。</p><div class="count-badge">符合：{len(res6)} 檔</div></div>
+                    <div class="table-container">{html_tb6}</div>
+                </div>
+                <div id="sub_strat7" class="sub-tab-content">
+                    <div class="info-box"><p>🎯 創 20 日新高 & 底底高 & 收高量增 & 法人七日不賣。</p><div class="count-badge">符合：{len(res7)} 檔</div></div>
+                    <div class="table-container">{html_tb7}</div>
+                </div>
+                <div id="sub_strat13" class="sub-tab-content">
+                    <div class="info-box"><p>🎯 最新收盤價距離「近60日最高收盤價」在 -2% 以內，且成交量大於 500 張。</p><div class="count-badge">符合：{len(res13)} 檔</div></div>
+                    <div class="table-container">{html_tb13}</div>
+                </div>
+                <div id="sub_strat14" class="sub-tab-content">
+                    <div class="info-box"><p>🎯 創 20 日新高、量增，且法人（外資、投信）過去 7 天皆無賣出。</p><div class="count-badge">符合：{len(res14)} 檔</div></div>
+                    <div class="table-container">{html_tb14}</div>
+                </div>
+                <div id="sub_strat15" class="sub-tab-content">
+                    <div class="info-box"><p>🎯 收盤價創 60 日新高，且量增 1.2 倍，底部區間壓縮突破。</p><div class="count-badge">符合：{len(res15)} 檔</div></div>
+                    <div class="table-container">{html_tb15}</div>
+                </div>
+                <div id="sub_strat9" class="sub-tab-content">
+                    <div class="info-box"><p>🎯 漲幅過濾 + 創高 + 大戶比例 + 法人連七不賣。</p><div class="count-badge">符合：{len(res9)} 檔</div></div>
+                    <div class="table-container">{html_tb9}</div>
+                </div>
             </div>
 
-            <div id="Strat28" class="tabcontent">
-                <div class="info-box">
-                    <p>🎯 <b>策略 28：9 月組合第二 ➔ 最新選股建議</b></p>
-                    <p><b>三策略搭配：</b> {strat_results_27_31[28]["combo_name"]}</p>
-                    <p><b>歷史表現：</b> 上漲率 <b>{strat_results_27_31[28]["win_rate"]}%</b> | 平均漲幅 {strat_results_27_31[28]["avg_ret"]}% | 樣本數 {strat_results_27_31[28]["samples"]} 檔</p>
-                    <div class="count-badge">今日符合：<span id="count_Strat28">{strat_results_27_31[28]["count"]}</span> 檔</div>
+            <div id="Tab_MaxVol" class="tabcontent">
+                <div class="module-nav-box">
+                    <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇天量週期：</span>
+                    <select class="custom-select" onchange="switchSubTab('Tab_MaxVol', this.value)">
+                        <option value="sub_strat23" selected>23. 突破過去 10 天最大量高點</option>
+                        <option value="sub_strat16">16. 突破過去 60 天最大量高點</option>
+                    </select>
                 </div>
-                <div class="table-container">{strat_results_27_31[28]["html"]}</div>
+                <div id="sub_strat23" class="sub-tab-content" style="display:block;">
+                    <div class="info-box"><p>🎯 最新收盤價正式站上過去 10 個交易日內成交量最大當日的最高價。</p><div class="count-badge">符合：{len(res23)} 檔</div></div>
+                    <div class="table-container">{html_tb23}</div>
+                </div>
+                <div id="sub_strat16" class="sub-tab-content">
+                    <div class="info-box"><p>🎯 突破 60 日成交量最大當日高點、第一天剛突破且外資投信近 7 天無賣出。</p><div class="count-badge">符合：{len(res16)} 檔</div></div>
+                    <div class="table-container">{html_tb16}</div>
+                </div>
             </div>
 
-            <div id="Strat29" class="tabcontent">
-                <div class="info-box">
-                    <p>🎯 <b>策略 29：9 月組合第三 ➔ 最新選股建議</b></p>
-                    <p><b>三策略搭配：</b> {strat_results_27_31[29]["combo_name"]}</p>
-                    <p><b>歷史表現：</b> 上漲率 <b>{strat_results_27_31[29]["win_rate"]}%</b> | 平均漲幅 {strat_results_27_31[29]["avg_ret"]}% | 樣本數 {strat_results_27_31[29]["samples"]} 檔</p>
-                    <div class="count-badge">今日符合：<span id="count_Strat29">{strat_results_27_31[29]["count"]}</span> 檔</div>
+            <div id="Tab_StepGap" class="tabcontent">
+                <div class="module-nav-box">
+                    <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇短線型態：</span>
+                    <select class="custom-select" onchange="switchSubTab('Tab_StepGap', this.value)">
+                        <option value="sub_strat22" selected>22. 高勝率基因精選 (創五日高+墊高+跳空)</option>
+                        <option value="sub_strat1">1. 向上跳空不回補 ＋ 連續量增</option>
+                        <option value="sub_strat2">2. 階梯式墊高 ＋ 外資點火</option>
+                        <option value="sub_strat8">8. 連兩日收盤墊高 ＋ 法人連七不賣</option>
+                    </select>
                 </div>
-                <div class="table-container">{strat_results_27_31[29]["html"]}</div>
+                <div id="sub_strat22" class="sub-tab-content" style="display:block;">
+                    <div class="info-box"><p>🎯 融合回測第 1 名「創五日高+跳空」、第 2 名「創120日高」、第 3 名「連續墊高」精華。</p><div class="count-badge">符合：{len(res22)} 檔</div></div>
+                    <div class="table-container">{html_tb22}</div>
+                </div>
+                <div id="sub_strat1" class="sub-tab-content">
+                    <div class="info-box"><p>🎯 向上跳空不回補、連續量增。</p><div class="count-badge">符合：{len(res1)} 檔</div></div>
+                    <div class="table-container">{html_tb1}</div>
+                </div>
+                <div id="sub_strat2" class="sub-tab-content">
+                    <div class="info-box"><p>🎯 階梯式墊高、外資點火、過去七天法人不賣出。</p><div class="count-badge">符合：{len(res2)} 檔</div></div>
+                    <div class="table-container">{html_tb2}</div>
+                </div>
+                <div id="sub_strat8" class="sub-tab-content">
+                    <div class="info-box"><p>🎯 連兩日墊高 & 量能放大 & 法人七日不賣。</p><div class="count-badge">符合：{len(res8)} 檔</div></div>
+                    <div class="table-container">{html_tb8}</div>
+                </div>
             </div>
 
-            <div id="Strat30" class="tabcontent">
-                <div class="info-box">
-                    <p>🎯 <b>策略 30：9 月組合第四 ➔ 最新選股建議</b></p>
-                    <p><b>三策略搭配：</b> {strat_results_27_31[30]["combo_name"]}</p>
-                    <p><b>歷史表現：</b> 上漲率 <b>{strat_results_27_31[30]["win_rate"]}%</b> | 平均漲幅 {strat_results_27_31[30]["avg_ret"]}% | 樣本數 {strat_results_27_31[30]["samples"]} 檔</p>
-                    <div class="count-badge">今日符合：<span id="count_Strat30">{strat_results_27_31[30]["count"]}</span> 檔</div>
+            <div id="Tab_Whale" class="tabcontent">
+                <div class="module-nav-box">
+                    <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇主力模式：</span>
+                    <select class="custom-select" onchange="switchSubTab('Tab_Whale', this.value)">
+                        <option value="sub_strat25" selected>25. 倚強科模式複製 (大戶&ge;60% ＋ 均線發散)</option>
+                        <option value="sub_strat24">24. 飆股基因起漲 (近10日漲5%~25%起漲甜蜜區)</option>
+                    </select>
                 </div>
-                <div class="table-container">{strat_results_27_31[30]["html"]}</div>
+                <div id="sub_strat25" class="sub-tab-content" style="display:block;">
+                    <div class="info-box"><p>🎯 千張大戶 &ge; 60% ＋ 5MA>20MA ＋ 出量1.5倍 ＋ 漲幅3%~25%起漲區 ＋ 法人無賣壓。</p><div class="count-badge">符合：{len(res25)} 檔</div></div>
+                    <div class="table-container">{html_tb25}</div>
+                </div>
+                <div id="sub_strat24" class="sub-tab-content">
+                    <div class="info-box"><p>🎯 複製過去10天暴漲40%主力特徵：鎖定近10日漲幅 5%~25%、近5日紅盤&ge;4天、今日出量&ge;1.2倍、大戶高鎖碼。</p><div class="count-badge">符合：{len(res24)} 檔</div></div>
+                    <div class="table-container">{html_tb24}</div>
+                </div>
             </div>
 
-            <div id="Strat31" class="tabcontent">
-                <div class="info-box">
-                    <p>🎯 <b>策略 31：9 月組合第五 ➔ 最新選股建議</b></p>
-                    <p><b>三策略搭配：</b> {strat_results_27_31[31]["combo_name"]}</p>
-                    <p><b>歷史表現：</b> 上漲率 <b>{strat_results_27_31[31]["win_rate"]}%</b> | 平均漲幅 {strat_results_27_31[31]["avg_ret"]}% | 樣本數 {strat_results_27_31[31]["samples"]} 檔</p>
-                    <div class="count-badge">今日符合：<span id="count_Strat31">{strat_results_27_31[31]["count"]}</span> 檔</div>
+            <div id="Tab_Revenue" class="tabcontent">
+                <div class="module-nav-box">
+                    <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇營收成長條件：</span>
+                    <select class="custom-select" onchange="switchSubTab('Tab_Revenue', this.value)">
+                        <option value="sub_strat18" selected>18. 連續 3 個月營收月增 (MoM) ＋ 出量收紅</option>
+                        <option value="sub_strat19">19. 最新月營收暴增 1.5 倍以上 ＋ 首日出量</option>
+                    </select>
                 </div>
-                <div class="table-container">{strat_results_27_31[31]["html"]}</div>
+                <div id="sub_strat18" class="sub-tab-content" style="display:block;">
+                    <div class="info-box"><p>🎯 連續三個月營收月增 (MoM) | 今日第一天出量 (&ge; 1.2倍且昨未爆量) | 股價收紅。</p><div class="count-badge">符合：{len(res18)} 檔</div></div>
+                    <div class="table-container">{html_tb18}</div>
+                </div>
+                <div id="sub_strat19" class="sub-tab-content">
+                    <div class="info-box"><p>🎯 最新月營收為前月 1.5 倍以上 (月增率 &ge; 50%) | 今日第一天出量 (&ge; 1.2倍且昨未爆量)。</p><div class="count-badge">符合：{len(res19)} 檔</div></div>
+                    <div class="table-container">{html_tb19}</div>
+                </div>
             </div>
 
-            <div id="Strat25" class="tabcontent"><div class="info-box"><p>🎯 <b>策略 25：倚強科模式複製</b> 千張大戶 &ge; 60% ＋ 5MA>20MA ＋ 出量1.5倍 ＋ 漲幅3%~25%起漲甜蜜區。</p><div class="count-badge">符合：<span id="count_Strat25">{len(res25)}</span> 檔</div></div><div class="table-container">{html_tb25}</div></div>
-            <div id="Strat24" class="tabcontent"><div class="info-box"><p>🎯 <b>策略 24：飆股基因複製篩選器</b> 鎖定近10日漲幅 5%~25% 起漲甜蜜區、近5日至少4天收紅、今日出量 &ge; 1.2倍、千張大戶持股高（或外資買超）、投信無賣壓。</p><div class="count-badge">符合：<span id="count_Strat24">{len(res24)}</span> 檔</div></div><div class="table-container">{html_tb24}</div></div>
-            <div id="Strat23" class="tabcontent"><div class="info-box"><p>🎯 <b>策略 23：突破過去10天最大量高點</b> 最新收盤價正式突破過去 10 個交易日內成交量最大那一天的當日最高價。</p><div class="count-badge">符合：<span id="count_Strat23">{len(res23)}</span> 檔</div></div><div class="table-container">{html_tb23}</div></div>
-            <div id="Strat22" class="tabcontent"><div class="info-box"><p>🎯 <b>策略 22：高勝率基因精選</b> 融合回測第 1 名「創五日高+跳空」、第 2 名「創120日高」、第 3 名「連續墊高」之精華。</p><div class="count-badge">符合：<span id="count_Strat22">{len(res22)}</span> 檔</div></div><div class="table-container">{html_tb22}</div></div>
-            <div id="Strat21" class="tabcontent"><div class="info-box"><p>🎯 <b>策略 21：30天歷史回測</b> 統計各策略在過去 30 個交易日內選出的個股，在「隔天收盤為紅盤」的歷史機率與平均漲跌幅度。</p><div class="count-badge">📊 依上漲勝率排行</div></div><div class="table-container">{html_tb21}</div></div>
-            <div id="Strat20" class="tabcontent"><div class="info-box"><p>🎯 <b>選股邏輯：</b> 1. 外資連三日買超且買超張數遞增 (越買越多) | 2. 最新一日出量 (&ge; 1.2倍) | 3. 股價收紅。</p><div class="count-badge">符合：<span id="count_Strat20">{len(res20)}</span> 檔</div></div><div class="table-container">{html_tb20}</div></div>
-            <div id="Strat19" class="tabcontent"><div class="info-box"><p>🎯 <b>選股邏輯：</b> 1. 最新一個月營收為前一個月的 1.5 倍以上 | 2. 今日第一天出量 (&ge; 1.2倍且昨未爆量)。</p><div class="count-badge">符合：<span id="count_Strat19">{len(res19)}</span> 檔</div></div><div class="table-container">{html_tb19}</div></div>
-            <div id="Strat18" class="tabcontent"><div class="info-box"><p>🎯 <b>選股邏輯：</b> 1. 連續三個月營收月增 (MoM) | 2. 今日第一天出量 (&ge; 1.2倍且昨未爆量) | 3. 股價收紅。</p><div class="count-badge">符合：<span id="count_Strat18">{len(res18)}</span> 檔</div></div><div class="table-container">{html_tb18}</div></div>
-            <div id="Strat17" class="tabcontent"><div class="info-box"><p>🎯 <b>選股邏輯：</b> 最新收盤價大於過去 120 個交易日內每一天的收盤價 (半年新高)。</p><div class="count-badge">符合：<span id="count_Strat17">{len(res17)}</span> 檔</div></div><div class="table-container">{html_tb17}</div></div>
-            <div id="Strat16" class="tabcontent"><div class="info-box"><p>🎯 <b>選股邏輯：</b> 1. 突破60日成交量最大當日高點 | 2. 第一天剛突破 | 3. 外資與投信近七天無賣出。</p><div class="count-badge">符合：<span id="count_Strat16">{len(res16)}</span> 檔</div></div><div class="table-container">{html_tb16}</div></div>
-            <div id="Strat15" class="tabcontent"><div class="info-box"><p>🎯 <b>選股邏輯：</b> 收盤價創 60 日新高，且量增 1.2 倍，底部區間壓縮突破。</p><div class="count-badge">符合：<span id="count_Strat15">{len(res15)}</span> 檔</div></div><div class="table-container">{html_tb15}</div></div>
-            <div id="Strat14" class="tabcontent"><div class="info-box"><p>🎯 <b>選股邏輯：</b> 創 20 日新高、量增，且法人（外資、投信）過去 7 天皆無賣出。</p><div class="count-badge">符合：<span id="count_Strat14">{len(res14)}</span> 檔</div></div><div class="table-container">{html_tb14}</div></div>
-            <div id="Strat13" class="tabcontent"><div class="info-box"><p>🎯 <b>選股邏輯：</b> 最新收盤價距離「近60日最高收盤價」在 -2% 以內，且成交量大於 500 張。</p><div class="count-badge">符合：<span id="count_Strat13">{len(res13)}</span> 檔</div></div><div class="table-container">{html_tb13}</div></div>
-            <div id="Strat1" class="tabcontent"><div class="info-box"><p>🎯 <b>選股邏輯：</b> 向上跳空不回補、連續量增。</p><div class="count-badge">符合：<span id="count_Strat1">{len(res1)}</span> 檔</div></div><div class="table-container">{html_tb1}</div></div>
-            <div id="Strat2" class="tabcontent"><div class="info-box"><p>🎯 <b>選股邏輯：</b> 階梯式墊高、外資點火、過去七天法人不賣出。</p><div class="count-badge">符合：<span id="count_Strat2">{len(res2)}</span> 檔</div></div><div class="table-container">{html_tb2}</div></div>
-            <div id="Strat3" class="tabcontent"><div class="info-box"><p>🎯 <b>選股邏輯：</b> 最新日量增、投信七日不賣出、外資連續買超。</p><div class="count-badge">符合：<span id="count_Strat3">{len(res3)}</span> 檔</div></div><div class="table-container">{html_tb3}</div></div>
-            <div id="Strat4" class="tabcontent"><div class="info-box"><p>🎯 <b>選股邏輯：</b> 創 20 日新高、過去七天投信不賣、量大於前一日。</p><div class="count-badge">符合：<span id="count_Strat4">{len(res4)}</span> 檔</div></div><div class="table-container">{html_tb4}</div></div>
-            <div id="Strat5" class="tabcontent"><div class="info-box"><p>🎯 <b>選股邏輯：</b> 旱地拔蔥 (前6天法人0，今日突介入)</p><div class="count-badge">符合：<span id="count_Strat5">{len(res5)}</span> 檔</div></div><div class="table-container">{html_tb5}</div></div>
-            <div id="Strat6" class="tabcontent"><div class="info-box"><p>🎯 <b>選股邏輯：</b> 創五日新高 & 跳空量增 & 法人連三日不賣</p><div class="count-badge">符合：<span id="count_Strat6">{len(res6)}</span> 檔</div></div><div class="table-container">{html_tb6}</div></div>
-            <div id="Strat7" class="tabcontent"><div class="info-box"><p>🎯 <b>選股邏輯：</b> 創 20 日新高 & 底底高 & 收高量增 & 法人七日不賣</p><div class="count-badge">符合：<span id="count_Strat7">{len(res7)}</span> 檔</div></div><div class="table-container">{html_tb7}</div></div>
-            <div id="Strat8" class="tabcontent"><div class="info-box"><p>🎯 <b>選股邏輯：</b> 連兩日墊高 & 量能放大 & 法人七日不賣</p><div class="count-badge">符合：<span id="count_Strat8">{len(res8)}</span> 檔</div></div><div class="table-container">{html_tb8}</div></div>
-            <div id="Strat9" class="tabcontent"><div class="info-box"><p>🎯 <b>選股邏輯：</b> 漲幅過濾 + 創高 + 大戶比例 + 法人連七不賣</p><div class="count-badge">符合：<span id="count_Strat9">{len(res9)}</span> 檔</div></div><div class="table-container">{html_tb9}</div></div>
-            <div id="Strat10" class="tabcontent"><div class="info-box"><p>🎯 <b>選股邏輯：</b> 限定上櫃股票 | 最新收盤漲幅大於自選百分比。</p><div class="count-badge">符合：<span id="count_Strat10">{len(res10)}</span> 檔</div></div><div class="table-container">{html_tb10}</div></div>
-            <div id="Strat11" class="tabcontent"><div class="info-box"><p>🎯 <b>選股邏輯：</b> 限定上櫃股票 | 實體紅K強勢股 (收盤大於開盤)。</p><div class="count-badge">符合：<span id="count_Strat11">{len(res11)}</span> 檔</div></div><div class="table-container">{html_tb11}</div></div>
+            <div id="Tab_Inst" class="tabcontent">
+                <div class="module-nav-box">
+                    <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇法人籌碼行為：</span>
+                    <select class="custom-select" onchange="switchSubTab('Tab_Inst', this.value)">
+                        <option value="sub_strat20" selected>20. 外資連三日買超且越買越多</option>
+                        <option value="sub_strat3">3. 最新日量增 ＋ 投信不賣 ＋ 外資連買</option>
+                        <option value="sub_strat5">5. 旱地拔蔥 (前6天法人0，今日突大買)</option>
+                    </select>
+                </div>
+                <div id="sub_strat20" class="sub-tab-content" style="display:block;">
+                    <div class="info-box"><p>🎯 外資連三日買超且買超張數遞增 (越買越多) | 最新一日出量 (&ge; 1.2倍) | 股價收紅。</p><div class="count-badge">符合：{len(res20)} 檔</div></div>
+                    <div class="table-container">{html_tb20}</div>
+                </div>
+                <div id="sub_strat3" class="sub-tab-content">
+                    <div class="info-box"><p>🎯 最新日量增、投信七日不賣出、外資連續買超。</p><div class="count-badge">符合：{len(res3)} 檔</div></div>
+                    <div class="table-container">{html_tb3}</div>
+                </div>
+                <div id="sub_strat5" class="sub-tab-content">
+                    <div class="info-box"><p>🎯 旱地拔蔥 (前6天法人0，今日突介入)。</p><div class="count-badge">符合：{len(res5)} 檔</div></div>
+                    <div class="table-container">{html_tb5}</div>
+                </div>
+            </div>
+
+            <div id="Tab_OTC" class="tabcontent">
+                <div class="module-nav-box">
+                    <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇上櫃強勢型態：</span>
+                    <select class="custom-select" onchange="switchSubTab('Tab_OTC', this.value)">
+                        <option value="sub_strat11" selected>11. 上櫃實體紅 K 強勢股 (收盤大於開盤)</option>
+                        <option value="sub_strat10">10. 上櫃收盤強勢股 (收盤漲幅排行)</option>
+                    </select>
+                </div>
+                <div id="sub_strat11" class="sub-tab-content" style="display:block;">
+                    <div class="info-box"><p>🎯 限定上櫃股票 | 實體紅K強勢股 (收盤大於開盤)。</p><div class="count-badge">符合：{len(res11)} 檔</div></div>
+                    <div class="table-container">{html_tb11}</div>
+                </div>
+                <div id="sub_strat10" class="sub-tab-content">
+                    <div class="info-box"><p>🎯 限定上櫃股票 | 最新收盤漲幅排行。</p><div class="count-badge">符合：{len(res10)} 檔</div></div>
+                    <div class="table-container">{html_tb10}</div>
+                </div>
+            </div>
+
+            <div id="Tab_Backtest" class="tabcontent">
+                <div class="module-nav-box">
+                    <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇回測研究模組：</span>
+                    <select class="custom-select" onchange="switchSubTab('Tab_Backtest', this.value)">
+                        <option value="sub_strat26" selected>26. 9 月三策略組合挖掘 (10/1~10/8 績效)</option>
+                        <option value="sub_strat21">21. 過去 30 天各策略隔日勝率回測</option>
+                    </select>
+                </div>
+                <div id="sub_strat26" class="sub-tab-content" style="display:block;">
+                    <div class="info-box"><p>🎯 回測 2026/09/01～2026/09/30 期間任三策略同時命中之個股，以 <b>10/01 開盤至 10/08 收盤</b> 計算實際績效，依上漲機率（勝率）最高前五名搭配自動建構策略 27~31。</p><div class="count-badge">📊 969 組三策略搭配排序總覽</div></div>
+                    <div class="table-container">{html_tb26}</div>
+                </div>
+                <div id="sub_strat21" class="sub-tab-content">
+                    <div class="info-box"><p>🎯 統計各策略在過去 30 個交易日內選出的個股，在「隔天收盤為紅盤」的歷史機率與平均漲跌幅度。</p><div class="count-badge">📊 依上漲勝率排行</div></div>
+                    <div class="table-container">{html_tb21}</div>
+                </div>
+            </div>
         </div>
 
         <script>
@@ -1830,6 +1939,14 @@ def main():
                 document.getElementById(strategyName).style.display = "block";
                 evt.currentTarget.classList.add("active");
                 evt.currentTarget.scrollIntoView({{ behavior: 'smooth', inline: 'center', block: 'nearest' }});
+            }}
+
+            function switchSubTab(parentTabId, subTargetId) {{
+                const parent = document.getElementById(parentTabId);
+                if (!parent) return;
+                parent.querySelectorAll('.sub-tab-content').forEach(el => el.style.display = 'none');
+                const target = parent.querySelector('#' + subTargetId);
+                if (target) target.style.display = 'block';
             }}
 
             function setupFavorites() {{
@@ -1937,7 +2054,7 @@ def main():
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(html_content)
 
-    print(f"\n✅ 策略 26（三策略組合高勝率回測）與 策略 27~31（勝率前五強即時選股）已生成！檔案: {html_filename}")
+    print(f"\n✅ 策略整合與重構完畢！已成功輸出 10 大核心模組。檔案: {html_filename}")
     if os.environ.get("GITHUB_ACTIONS") != "true":
         webbrowser.open(f"file:///{file_path}")
 

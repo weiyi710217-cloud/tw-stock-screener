@@ -660,7 +660,7 @@ def main():
     df_merge['投信近七日(張)'] = df_merge[[f'投信_{i}' for i in range(7)]].sum(axis=1)
     df_merge['外資近一月(張)'] = df_merge[[f'外資_{i}' for i in range(20)]].sum(axis=1)
 
-    # 統一初始化計算衍生指標，防止任何潛在 KeyError
+    # 統一在主表初始化計算所有衍生欄位，並加入 data-code 以供前端 Favorites 功能使用
     df_merge['最新法人買超(張)'] = (df_merge['外資_0'] + df_merge['投信_0']).round(0)
     df_merge['增量倍數'] = (df_merge['成交量_0'] / df_merge['成交量_1'].replace(0, np.nan)).round(2).fillna(0.0)
     df_merge['實體K漲幅(%)'] = (((df_merge['收盤價_0'] - df_merge['開盤價_0']) / df_merge['開盤價_0'].replace(0, np.nan)) * 100).round(2).fillna(0.0)
@@ -671,6 +671,10 @@ def main():
     df_merge['最新日外資(張)'] = df_merge['外資_0']
     df_merge['前1日外資(張)'] = df_merge['外資_1']
     df_merge['前2日外資(張)'] = df_merge['外資_2']
+    
+    df_merge['法人1日集中度(%)'] = (((df_merge['外資_0'] + df_merge['投信_0']) / df_merge['成交量_0'].replace(0, np.nan)) * 100).round(2).fillna(0.0)
+    df_merge['法人2日集中度(%)'] = (((df_merge['外資_0'] + df_merge['外資_1'] + df_merge['投信_0'] + df_merge['投信_1']) / (df_merge['成交量_0'] + df_merge['成交量_1']).replace(0, np.nan)) * 100).round(2).fillna(0.0)
+    df_merge['法人3日集中度(%)'] = (((df_merge['外資_0'] + df_merge['外資_1'] + df_merge['外資_2'] + df_merge['投信_0'] + df_merge['投信_1'] + df_merge['投信_2']) / (df_merge['成交量_0'] + df_merge['成交量_1'] + df_merge['成交量_2']).replace(0, np.nan)) * 100).round(2).fillna(0.0)
 
     if not df_tdcc.empty:
         df_merge = pd.merge(df_merge, df_tdcc, on='股票代號', how='left')
@@ -711,7 +715,8 @@ def main():
     d1_s = f"{date_1[4:6]}/{date_1[6:]}"
     d2_s = f"{date_2[4:6]}/{date_2[6:]}"
 
-    df_merge['⭐'] = "<span class='fav-star'>☆</span>"
+    # 替換為綁定股票代碼的 ⭐ 標籤
+    df_merge['⭐'] = df_merge['股票代號'].apply(lambda x: f"<span class='fav-star' data-code='{x}'>☆</span>")
 
     def calc_gap_days(row):
         try:
@@ -1051,6 +1056,14 @@ def main():
         inst_safe = (df_merge[f'外資_{k}'] >= 0) | (df_merge[f'投信_{k}'] >= 0)
         return whale_locked & bullish_ma & vol_surge & launch_zone & inst_safe
 
+    def cond32_fn(k):
+        return df_merge['千張大戶比例(%)'] >= 60.0
+        
+    def cond32_backtest_fn(k):
+        whale = df_merge['千張大戶比例(%)'] >= 60.0
+        ratio = (((df_merge[f'外資_{k}'] + df_merge[f'外資_{k+1}'] + df_merge[f'外資_{k+2}'] + df_merge[f'投信_{k}'] + df_merge[f'投信_{k+1}'] + df_merge[f'投信_{k+2}']) / (df_merge[f'成交量_{k}'] + df_merge[f'成交量_{k+1}'] + df_merge[f'成交量_{k+2}']).replace(0, np.nan)) * 100).fillna(0.0)
+        return whale & (ratio >= 20.0)
+
     # 封裝單一策略資料表生成器
     def build_res(cond_fn, sort_cols, asc_list, rename_dict=None, extra_cols=None):
         cond = cond_fn(0)
@@ -1068,6 +1081,14 @@ def main():
         return res, html
 
     std_rename = {"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"}
+    inst_rename = {**std_rename, "外資_0": "外資(T)", "外資_1": "外資(T-1)", "外資_2": "外資(T-2)", "投信_0": "投信(T)", "投信_1": "投信(T-1)", "投信_2": "投信(T-2)"}
+
+    # === 生成所有個股母表給【我的最愛】頁籤 ===
+    res_fav = df_merge.copy()
+    res_fav = res_fav.sort_values(by="最新漲幅(%)", ascending=False)
+    res_fav = res_fav.rename(columns=std_rename)
+    cols_fav = base_cols + chip_cols
+    html_tb_fav = apply_color_formatting(res_fav[cols_fav]).to_html(index=False, classes="styled-table sortable-table", escape=False, table_id="fav-table")
 
     res1, html_tb1 = build_res(cond1_fn, ["跳空天數", "量增天數", "增量倍數"], [False, False, False], std_rename, ["跳空天數", "量增天數", "增量倍數"])
     res2, html_tb2 = build_res(cond2_fn, ["墊高天數", "外資連買天數", "增量倍數"], [False, False, False], std_rename, ["墊高天數", "量增天數", "外資連買天數", "增量倍數"])
@@ -1093,6 +1114,7 @@ def main():
     res23, html_tb23 = build_res(cond23_fn, ["最新漲幅(%)", "增量倍數"], [False, False], std_rename, ["近10日最大量日最高價", "增量倍數"])
     res24, html_tb24 = build_res(cond24_fn, ["最新漲幅(%)", "增量倍數"], [False, False], std_rename, ["千張大戶比例(%)", "增量倍數"])
     res25, html_tb25 = build_res(cond25_fn, ["千張大戶比例(%)", "最新漲幅(%)"], [False, False], std_rename, ["千張大戶比例(%)", "增量倍數"])
+    res32, html_tb32 = build_res(cond32_fn, ["法人3日集中度(%)", "最新漲幅(%)"], [False, False], inst_rename, ["千張大戶比例(%)", "最新營收月增率(%)", "法人1日集中度(%)", "法人2日集中度(%)", "法人3日集中度(%)", "外資(T)", "外資(T-1)", "外資(T-2)", "投信(T)", "投信(T-1)", "投信(T-2)"])
 
     # 策略 26: 9 月三策略組合挖掘回測
     print("🔬 啟動策略 26：9 月三策略組合高勝率回測...")
@@ -1104,6 +1126,7 @@ def main():
         ("14.創20日高不賣", cond14_fn), ("15.壓縮突破60日", cond15_fn), ("16.最大量高點", cond16_fn),
         ("17.創120日高", cond17_fn), ("20.外資越買越多出量", cond20_fn),
         ("22.高勝率基因複合", cond22_fn), ("23.突破10日最大量", cond23_fn),
+        ("32.大戶鎖碼法人集中", cond32_backtest_fn)
     ]
 
     sept_indices = [i for i, (d, _) in enumerate(days_data) if "20260901" <= d <= "20260930"]
@@ -1238,7 +1261,7 @@ def main():
         ("14.創20日高不賣", cond14_fn), ("15.壓縮突破60日", cond15_fn), ("16.最大量高點", cond16_fn),
         ("17.創120日高", cond17_fn), ("18.營收連三增啟動", cond18_fn), ("19.營收暴增1.5倍", cond19_fn),
         ("20.外資越買越多出量", cond20_fn), ("22.高勝率基因複合", cond22_fn), ("23.突破10日最大量", cond23_fn),
-        ("24.飆股基因起漲", cond24_fn), ("25.倚強科模式複製", cond25_fn),
+        ("24.飆股基因起漲", cond24_fn), ("25.倚強科模式複製", cond25_fn), ("32.大戶鎖碼法人集中", cond32_backtest_fn)
     ]
 
     backtest_records = []
@@ -1274,7 +1297,7 @@ def main():
     df_strat21_show["隔日平均報酬(%)"] = df_strat21_show["隔日平均報酬(%)"].apply(color_pct)
     html_tb21 = df_strat21_show.to_html(index=False, classes="styled-table backtest-table sortable-table", escape=False)
 
-    # 策略 12: 綜合排行
+    # 策略 12: 綜合排行 (納入 1~11, 13~20, 22~25, 27~31, 32)
     st_lists = [
         ("1.跳空", res1), ("2.墊高", res2), ("3.量增法人", res3),
         ("4.創20日高", res4), ("5.拔蔥", res5), ("6.五日高", res6),
@@ -1285,7 +1308,7 @@ def main():
         ("18.營收連三增啟動", res18), ("19.營收暴增1.5倍", res19),
         ("20.外資越買越多出量", res20), ("22.高勝率基因複合", res22),
         ("23.突破10日最大量", res23), ("24.飆股基因起漲", res24),
-        ("25.倚強科模式複製", res25),
+        ("25.倚強科模式複製", res25), ("32.大戶鎖碼法人集中", res32),
         ("27.組合首選", strat_results_27_31[27]["df"]),
         ("28.組合第二", strat_results_27_31[28]["df"]),
         ("29.組合第三", strat_results_27_31[29]["df"]),
@@ -1314,7 +1337,7 @@ def main():
     else:
         html_tb12 = "<p style='text-align:center;'>目前無任何股票入選預設策略</p>"
 
-    # 系統警告折疊區
+    # 製作可收合警告區塊
     warning_html = ""
     if WARNINGS:
         unique_warns = sorted(set(WARNINGS))
@@ -1577,6 +1600,7 @@ def main():
                 border-bottom: none;
             }}
 
+            /* 股票表格前兩欄固定 */
             .styled-table:not(.backtest-table) th:nth-child(1),
             .styled-table:not(.backtest-table) td:nth-child(1) {{
                 position: sticky;
@@ -1609,6 +1633,7 @@ def main():
                 background-color: #ffffff;
             }}
 
+            /* 策略 21, 26 專屬樣式：不套用 position:sticky 避免遮擋第一欄 */
             .backtest-table th, .backtest-table td {{
                 position: static !important;
                 box-shadow: none !important;
@@ -1668,12 +1693,15 @@ def main():
                 cursor: pointer;
                 color: #cbd5e1;
                 font-size: 18px;
-                padding: 2px;
+                padding: 4px;
                 display: inline-block;
                 transition: transform 0.15s ease;
             }}
             .fav-star:active {{ transform: scale(1.2); }}
             .fav-star.active {{ color: var(--star); font-weight: bold; }}
+
+            #fav-table tbody tr {{ display: none; }}
+            #fav-table tbody tr.row-favorite {{ display: table-row; }}
 
             .tabcontent {{ display: none; }}
             .sub-tab-content {{ display: none; }}
@@ -1686,6 +1714,7 @@ def main():
         </div>
 
         <div class="tabs-wrapper" id="tabsHeader">
+            <button class="tab-btn" onclick="openStrategy(event, 'Tab_Favorites')">💖 我的最愛</button>
             <button class="tab-btn active" onclick="openStrategy(event, 'Tab_Strat12')">🌟 綜合排行</button>
             <button class="tab-btn" onclick="openStrategy(event, 'Tab_TopCombos')">🎖 最佳回測組合</button>
             <button class="tab-btn" onclick="openStrategy(event, 'Tab_Breakout')">🏆 創高突破</button>
@@ -1700,6 +1729,17 @@ def main():
 
         <div class="container">
             {warning_html}
+
+            <div id="Tab_Favorites" class="tabcontent">
+                <div class="info-box">
+                    <p>🎯 <b>我的最愛：</b> 跨裝置（瀏覽器本地端）儲存的專屬觀察清單，點選表格中的 ⭐ 即可加入。</p>
+                    <div class="count-badge">💖 自選清單：<span id="count_Tab_Favorites">0</span> 檔</div>
+                </div>
+                <div id="fav-empty-msg" style="text-align:center; padding: 40px; color:#64748b; font-size:14px; display:none;">
+                    尚未加入任何最愛標的，請點擊各策略清單中的 ⭐ 圖示即可加入。
+                </div>
+                <div class="table-container">{html_tb_fav}</div>
+            </div>
 
             <div id="Tab_Strat12" class="tabcontent" style="display: block;">
                 <div class="info-box">
@@ -1840,11 +1880,31 @@ def main():
                 <div class="module-nav-box">
                     <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇主力模式：</span>
                     <select class="custom-select" onchange="switchSubTab('Tab_Whale', this.value)">
-                        <option value="sub_strat25" selected>25. 倚強科模式複製 (大戶&ge;60% ＋ 均線發散)</option>
+                        <option value="sub_strat32" selected>32. 大戶鎖碼 ＋ 法人集中度</option>
+                        <option value="sub_strat25">25. 倚強科模式複製 (大戶&ge;60% ＋ 均線發散)</option>
                         <option value="sub_strat24">24. 飆股基因起漲 (近10日漲5%~25%起漲甜蜜區)</option>
                     </select>
                 </div>
-                <div id="sub_strat25" class="sub-tab-content" style="display:block;">
+                <div id="sub_strat32" class="sub-tab-content" style="display:block;">
+                    <div class="info-box">
+                        <p>🎯 <b>策略 32：大戶鎖碼 ＋ 法人集中度</b> 千張大戶佔比 > 60%，且過去 1~3 天「外資+投信」合計買超佔總成交量達一定比例。</p>
+                        <div class="filter-container">
+                            <select id="sel_Strat32_days" class="custom-select" onchange="filterStrat32()">
+                                <option value="1">過去 1 天集中度</option>
+                                <option value="2">過去 2 天集中度</option>
+                                <option value="3" selected>過去 3 天集中度</option>
+                            </select>
+                            <select id="sel_Strat32_ratio" class="custom-select" onchange="filterStrat32()">
+                                <option value="10">大於 10%</option>
+                                <option value="20" selected>大於 20%</option>
+                                <option value="30">大於 30%</option>
+                            </select>
+                        </div>
+                        <div class="count-badge">符合：<span id="count_Strat32">0</span> 檔</div>
+                    </div>
+                    <div class="table-container">{html_tb32}</div>
+                </div>
+                <div id="sub_strat25" class="sub-tab-content">
                     <div class="info-box"><p>🎯 千張大戶 &ge; 60% ＋ 5MA>20MA ＋ 出量1.5倍 ＋ 漲幅3%~25%起漲區 ＋ 法人無賣壓。</p><div class="count-badge">符合：{len(res25)} 檔</div></div>
                     <div class="table-container">{html_tb25}</div>
                 </div>
@@ -1933,6 +1993,87 @@ def main():
         </div>
 
         <script>
+            const FAV_KEY = 'tw_stock_favorites';
+
+            function getFavorites() {{
+                return JSON.parse(localStorage.getItem(FAV_KEY) || '[]');
+            }}
+
+            function saveFavorites(favs) {{
+                localStorage.setItem(FAV_KEY, JSON.stringify(favs));
+            }}
+
+            function updateFavEmptyState() {{
+                const favs = getFavorites();
+                const msg = document.getElementById('fav-empty-msg');
+                const tbl = document.getElementById('fav-table');
+                if(msg && tbl) {{
+                    if(favs.length === 0) {{
+                        msg.style.display = 'block';
+                        tbl.style.display = 'none';
+                    }} else {{
+                        msg.style.display = 'none';
+                        tbl.style.display = 'table';
+                    }}
+                }}
+                
+                const cnt = document.getElementById('count_Tab_Favorites');
+                if(cnt) cnt.innerText = favs.length;
+            }}
+
+            function restoreFavorites() {{
+                const favs = getFavorites();
+                document.querySelectorAll('.fav-star').forEach(star => {{
+                    const code = star.dataset.code;
+                    if (favs.includes(code)) {{
+                        star.classList.add('active');
+                        star.innerHTML = '★';
+                        star.closest('tr').classList.add('row-favorite');
+                    }}
+                }});
+                updateFavEmptyState();
+                
+                document.querySelectorAll('.styled-table tbody').forEach(tbody => {{
+                    sortTbody(tbody);
+                }});
+            }}
+
+            document.addEventListener('click', function(e) {{
+                if (e.target && e.target.classList.contains('fav-star')) {{
+                    e.preventDefault();
+                    e.stopPropagation();
+                    
+                    const star = e.target;
+                    const code = star.dataset.code;
+                    let favs = getFavorites();
+                    
+                    const isAdding = !star.classList.contains('active');
+                    
+                    if (isAdding) {{
+                        if(!favs.includes(code)) favs.push(code);
+                    }} else {{
+                        favs = favs.filter(c => c !== code);
+                    }}
+                    saveFavorites(favs);
+                    
+                    document.querySelectorAll(`.fav-star[data-code="${{code}}"]`).forEach(s => {{
+                        const tr = s.closest('tr');
+                        if (isAdding) {{
+                            s.classList.add('active');
+                            s.innerHTML = '★';
+                            tr.classList.add('row-favorite');
+                        }} else {{
+                            s.classList.remove('active');
+                            s.innerHTML = '☆';
+                            tr.classList.remove('row-favorite');
+                        }}
+                        sortTbody(tr.parentElement);
+                    }});
+                    
+                    updateFavEmptyState();
+                }}
+            }});
+
             function openStrategy(evt, strategyName) {{
                 document.querySelectorAll(".tabcontent").forEach(el => el.style.display = "none");
                 document.querySelectorAll(".tab-btn").forEach(el => el.classList.remove("active"));
@@ -1947,30 +2088,39 @@ def main():
                 parent.querySelectorAll('.sub-tab-content').forEach(el => el.style.display = 'none');
                 const target = parent.querySelector('#' + subTargetId);
                 if (target) target.style.display = 'block';
+                
+                if(subTargetId === 'sub_strat32') {{
+                    filterStrat32();
+                }}
             }}
 
-            function setupFavorites() {{
-                document.querySelectorAll('.fav-star').forEach(star => {{
-                    if(star.dataset.bound) return;
-                    star.dataset.bound = true;
+            function filterStrat32() {{
+                let days = parseInt(document.getElementById('sel_Strat32_days').value);
+                let minRatio = parseFloat(document.getElementById('sel_Strat32_ratio').value);
+                let table = document.getElementById('sub_strat32').querySelector("table");
+                if (!table) return;
 
-                    star.addEventListener('click', function(e) {{
-                        e.stopPropagation();
-                        const tr = this.closest('tr');
-                        const tbody = tr.parentElement;
-
-                        if (this.classList.contains('active')) {{
-                            this.classList.remove('active');
-                            this.innerHTML = '☆';
-                            tr.classList.remove('row-favorite');
-                        }} else {{
-                            this.classList.add('active');
-                            this.innerHTML = '★';
-                            tr.classList.add('row-favorite');
-                        }}
-                        sortTbody(tbody);
-                    }});
+                let headers = table.querySelectorAll("thead th");
+                let idx1 = -1, idx2 = -1, idx3 = -1;
+                headers.forEach((th, i) => {{
+                    if (th.innerText.includes("法人1日")) idx1 = i;
+                    if (th.innerText.includes("法人2日")) idx2 = i;
+                    if (th.innerText.includes("法人3日")) idx3 = i;
                 }});
+
+                let count = 0;
+                table.querySelectorAll("tbody tr").forEach(row => {{
+                    let cells = row.querySelectorAll("td");
+                    let val = 0;
+                    if (days === 1 && idx1 >= 0) val = parseFloat(cells[idx1].innerText);
+                    if (days === 2 && idx2 >= 0) val = parseFloat(cells[idx2].innerText);
+                    if (days === 3 && idx3 >= 0) val = parseFloat(cells[idx3].innerText);
+
+                    let show = (!isNaN(val) && val >= minRatio);
+                    row.style.display = show ? "" : "none";
+                    if(show) count++;
+                }});
+                updateVisibleCount('Strat32', count);
             }}
 
             function sortTbody(tbody, colIndex = -1, isAscending = false) {{
@@ -2034,9 +2184,17 @@ def main():
                 }});
             }}
 
+            function updateVisibleCount(tabId, visibleCount) {{
+                let elem = document.getElementById("count_" + tabId);
+                if(elem) elem.innerText = visibleCount;
+            }}
+
             window.addEventListener('DOMContentLoaded', () => {{
-                setupFavorites();
+                restoreFavorites();
                 enableTableSorting();
+                setTimeout(() => {{
+                    filterStrat32();
+                }}, 300);
             }});
         </script>
     </body>
@@ -2045,8 +2203,8 @@ def main():
 
     for code, row in res15.iterrows():
         is_max_vol = "true" if row['創60日最大量'] else "false"
-        search_str = f"<tr>\n      <td><span class='fav-star'>☆</span></td>\n      <td>{row['市場']}</td>"
-        replace_str = f"<tr data-is-max-vol='{is_max_vol}'>\n      <td><span class='fav-star'>☆</span></td>\n      <td>{row['市場']}</td>"
+        search_str = f"<tr>\n      <td><span class='fav-star' data-code='{code}'>☆</span></td>\n      <td>{row['市場']}</td>"
+        replace_str = f"<tr data-is-max-vol='{is_max_vol}'>\n      <td><span class='fav-star' data-code='{code}'>☆</span></td>\n      <td>{row['市場']}</td>"
         html_content = html_content.replace(search_str, replace_str)
 
     html_filename = "index.html"
@@ -2054,7 +2212,7 @@ def main():
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(html_content)
 
-    print(f"\n✅ 策略整合與重構完畢！已成功輸出 10 大核心模組。檔案: {html_filename}")
+    print(f"\n✅ 最愛清單功能 (LocalStorage) 已實作完成！檔案已生成: {html_filename}")
     if os.environ.get("GITHUB_ACTIONS") != "true":
         webbrowser.open(f"file:///{file_path}")
 

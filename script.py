@@ -1063,7 +1063,7 @@ def main():
         ratio = (((df_merge[f'外資_{k}'] + df_merge[f'外資_{k+1}'] + df_merge[f'外資_{k+2}'] + df_merge[f'投信_{k}'] + df_merge[f'投信_{k+1}'] + df_merge[f'投信_{k+2}']) / (df_merge[f'成交量_{k}'] + df_merge[f'成交量_{k+1}'] + df_merge[f'成交量_{k+2}']).replace(0, np.nan)) * 100).fillna(0.0)
         return whale & (ratio >= 20.0)
 
-    # 策略 33: 絕對鎖碼 (大戶>70% + 多頭排列 + 突破)
+    # 策略 33 修正：大戶>70% + 多頭排列 + 即將突破或突破半年高點5%以內
     def cond33_fn(k):
         whale_70 = df_merge['千張大戶比例(%)'] > 70.0
         ma5_k = df_merge[[f'收盤價_{k+j}' for j in range(5)]].mean(axis=1)
@@ -1075,8 +1075,9 @@ def main():
         close_120_k = [f'收盤價_{k+j}' for j in range(1, 121) if f'收盤價_{k+j}' in df_merge.columns]
         if not close_120_k: return pd.Series(False, index=df_merge.index)
         max_120_k = df_merge[close_120_k].max(axis=1)
-        breakout = (c_k > max_120_k * 1.05) & (max_120_k > 0)
-        return whale_70 & bullish_ma & breakout
+        # 距離高點 -5% ~ +5% 以內 (即將突破或剛突破)
+        near_breakout = (c_k >= max_120_k * 0.95) & (c_k <= max_120_k * 1.05) & (max_120_k > 0)
+        return whale_70 & bullish_ma & near_breakout
 
     def build_res(cond_fn, sort_cols, asc_list, rename_dict=None, extra_cols=None):
         cond = cond_fn(0)
@@ -1128,7 +1129,7 @@ def main():
     res25, html_tb25 = build_res(cond25_fn, ["千張大戶比例(%)", "最新漲幅(%)"], [False, False], std_rename, ["千張大戶比例(%)", "增量倍數"])
     res32, html_tb32 = build_res(cond32_fn, ["法人3日集中度(%)", "最新漲幅(%)"], [False, False], inst_rename, ["千張大戶比例(%)", "最新營收月增率(%)", "法人1日集中度(%)", "法人2日集中度(%)", "法人3日集中度(%)", "外資(T)", "外資(T-1)", "外資(T-2)", "投信(T)", "投信(T-1)", "投信(T-2)"])
     
-    # 策略 33 輸出表
+    # 策略 33 輸出表 (顯示大戶比、營收月增率、120日高點)
     res33, html_tb33 = build_res(cond33_fn, ["千張大戶比例(%)", "最新漲幅(%)"], [False, False], std_rename, ["千張大戶比例(%)", "最新營收月增率(%)", "120日最高收盤"])
 
     # 策略 26: 9 月三策略組合挖掘回測
@@ -1320,7 +1321,7 @@ def main():
         ("7.創20日高不賣", res7), ("8.連兩日創高", res8), ("9.多重", res9),
         ("10.上櫃強勢", res10), ("11.上櫃實體紅K", res11), ("13.逼近60日高", res13),
         ("14.創20日高+法人七日不賣", res14), ("15.壓縮突破60日高", res15_strict),
-        ("16.突破最大量高點", res16), ("17.創120日新高", res17),
+        ("16.突破最大量高點", res16), ("17.創120日高", res17),
         ("18.營收連三增啟動", res18), ("19.營收暴增1.5倍", res19),
         ("20.外資越買越多出量", res20), ("22.高勝率基因複合", res22),
         ("23.突破10日最大量", res23), ("24.飆股基因起漲", res24),
@@ -1354,7 +1355,6 @@ def main():
     else:
         html_tb12 = "<p style='text-align:center;'>目前無任何股票入選預設策略</p>"
 
-    # 製作可收合警告區塊
     warning_html = ""
     if WARNINGS:
         unique_warns = sorted(set(WARNINGS))
@@ -1430,7 +1430,6 @@ def main():
                 opacity: 0.85;
             }}
 
-            /* 單列滑動導覽標籤 */
             .tabs-wrapper {{
                 background: white;
                 border-bottom: 1px solid var(--border);
@@ -1617,7 +1616,6 @@ def main():
                 border-bottom: none;
             }}
 
-            /* 股票表格前兩欄固定 */
             .styled-table:not(.backtest-table) th:nth-child(1),
             .styled-table:not(.backtest-table) td:nth-child(1) {{
                 position: sticky;
@@ -1650,7 +1648,6 @@ def main():
                 background-color: #ffffff;
             }}
 
-            /* 策略 21, 26 專屬樣式：不套用 position:sticky 避免遮擋第一欄 */
             .backtest-table th, .backtest-table td {{
                 position: static !important;
                 box-shadow: none !important;
@@ -1747,6 +1744,7 @@ def main():
         <div class="container">
             {warning_html}
 
+            <!-- 0. 我的最愛 -->
             <div id="Tab_Favorites" class="tabcontent">
                 <div class="info-box">
                     <p>🎯 <b>我的最愛：</b> 跨裝置（瀏覽器本地端）儲存的專屬觀察清單，點選表格中的 ⭐ 即可加入。</p>
@@ -1758,6 +1756,7 @@ def main():
                 <div class="table-container">{html_tb_fav}</div>
             </div>
 
+            <!-- 1. 綜合排行 -->
             <div id="Tab_Strat12" class="tabcontent" style="display: block;">
                 <div class="info-box">
                     <p>🎯 <b>選股邏輯：</b> 統計所有策略預設條件下，選中最多次的股票排序。</p>
@@ -1766,6 +1765,7 @@ def main():
                 <div class="table-container">{html_tb12}</div>
             </div>
 
+            <!-- 2. 最佳回測組合 (策略 27~31 合併) -->
             <div id="Tab_TopCombos" class="tabcontent">
                 <div class="module-nav-box">
                     <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇回測最佳組合：</span>
@@ -1799,6 +1799,7 @@ def main():
                 </div>
             </div>
 
+            <!-- 3. 創高突破 (策略 4, 6, 7, 9, 13, 14, 15, 17 合併) -->
             <div id="Tab_Breakout" class="tabcontent">
                 <div class="module-nav-box">
                     <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇創高週期與條件：</span>
@@ -1847,6 +1848,7 @@ def main():
                 </div>
             </div>
 
+            <!-- 4. 天量突破 (策略 16, 23 合併) -->
             <div id="Tab_MaxVol" class="tabcontent">
                 <div class="module-nav-box">
                     <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇天量週期：</span>
@@ -1865,6 +1867,7 @@ def main():
                 </div>
             </div>
 
+            <!-- 5. 墊高跳空 (策略 1, 2, 8, 22 合併) -->
             <div id="Tab_StepGap" class="tabcontent">
                 <div class="module-nav-box">
                     <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇短線型態：</span>
@@ -1893,11 +1896,12 @@ def main():
                 </div>
             </div>
 
+            <!-- 6. 主力鎖碼 (策略 24, 25, 32, 33 合併) -->
             <div id="Tab_Whale" class="tabcontent">
                 <div class="module-nav-box">
                     <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇主力模式：</span>
                     <select class="custom-select" onchange="switchSubTab('Tab_Whale', this.value)">
-                        <option value="sub_strat33" selected>33. 絕對鎖碼 (大戶70% + 多頭排列 + 突破波段高點5%)</option>
+                        <option value="sub_strat33" selected>33. 絕對鎖碼 (大戶>70% + 多頭排列 + 接近或突破半年高點)</option>
                         <option value="sub_strat32">32. 大戶鎖碼 ＋ 法人集中度</option>
                         <option value="sub_strat25">25. 倚強科模式複製 (大戶&ge;60% ＋ 均線發散)</option>
                         <option value="sub_strat24">24. 飆股基因起漲 (近10日漲5%~25%起漲甜蜜區)</option>
@@ -1905,7 +1909,7 @@ def main():
                 </div>
                 <div id="sub_strat33" class="sub-tab-content" style="display:block;">
                     <div class="info-box">
-                        <p>🎯 <b>策略 33：絕對鎖碼突破</b> 千張大戶比例 &gt; 70% ＋ 5/20/60MA 均線多頭發散排列 ＋ 最新收盤價突破波段半年(120日)高點達 5% 以上。</p>
+                        <p>🎯 <b>策略 33：絕對鎖碼突破</b> 千張大戶比例 &gt; 70% ＋ 5/20/60MA 均線多頭排列 ＋ 最新收盤價距離半年(120日)高點在 -5% ~ +5% 以內（蓄勢待發或剛突破）。</p>
                         <div class="count-badge">符合：<span id="count_Strat33">{len(res33)}</span> 檔</div>
                     </div>
                     <div class="table-container">{html_tb33}</div>
@@ -1939,6 +1943,7 @@ def main():
                 </div>
             </div>
 
+            <!-- 7. 營收動能 (策略 18, 19 合併) -->
             <div id="Tab_Revenue" class="tabcontent">
                 <div class="module-nav-box">
                     <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇營收成長條件：</span>
@@ -1957,6 +1962,7 @@ def main():
                 </div>
             </div>
 
+            <!-- 8. 法人動能 (策略 3, 5, 20 合併) -->
             <div id="Tab_Inst" class="tabcontent">
                 <div class="module-nav-box">
                     <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇法人籌碼行為：</span>
@@ -1980,6 +1986,7 @@ def main():
                 </div>
             </div>
 
+            <!-- 9. 上櫃強勢 (策略 10, 11 合併) -->
             <div id="Tab_OTC" class="tabcontent">
                 <div class="module-nav-box">
                     <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇上櫃強勢型態：</span>
@@ -1998,6 +2005,7 @@ def main():
                 </div>
             </div>
 
+            <!-- 10. 量化回測總覽 (策略 21, 26 合併) -->
             <div id="Tab_Backtest" class="tabcontent">
                 <div class="module-nav-box">
                     <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇回測研究模組：</span>
@@ -2237,7 +2245,7 @@ def main():
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(html_content)
 
-    print(f"\n✅ 策略 33 絕對鎖碼 (大戶>70%+均線多頭+突破波段高) 已成功加入！檔案: {html_filename}")
+    print(f"\n✅ 策略 33 已調整為「即將或剛突破半年高點 5% 區間」！檔案已生成: {html_filename}")
     if os.environ.get("GITHUB_ACTIONS") != "true":
         webbrowser.open(f"file:///{file_path}")
 

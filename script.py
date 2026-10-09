@@ -4,6 +4,7 @@ import random
 import os
 import webbrowser
 import itertools
+import numpy as np
 import pandas as pd
 import requests
 
@@ -841,7 +842,7 @@ def main():
                 df_out[col_name] = df_out[col_name].apply(color_pct)
         return df_out
 
-    # 策略 1 ~ 11, 13 ~ 17, 20, 22, 23, 24, 25 函數定義
+    # 基礎策略函式定義
     def cond1_fn(k):
         l_k, c_prev = df_merge[f'最低價_{k}'], df_merge[f'收盤價_{k+1}']
         v_k, v_prev = df_merge[f'成交量_{k}'], df_merge[f'成交量_{k+1}']
@@ -1038,178 +1039,51 @@ def main():
         inst_safe = (df_merge[f'外資_{k}'] >= 0) | (df_merge[f'投信_{k}'] >= 0)
         return whale_locked & bullish_ma & vol_surge & launch_zone & inst_safe
 
-    # 執行策略 1 ~ 20, 22 ~ 25 產出個別 DataFrame
-    res1 = df_merge[cond1_fn(0)].copy()
-    res1['近7日符合次數'] = eval_rolling_condition(cond1_fn)[cond1_fn(0)]
-    res1["增量倍數"] = (res1["成交量_0"] / res1["成交量_1"]).round(2)
-    res1 = res1.sort_values(by=["跳空天數", "量增天數", "增量倍數"], ascending=[False, False, False])
-    res1 = res1.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
-    html_tb1 = apply_color_formatting(res1[base_cols + ["跳空天數", "量增天數", "增量倍數"] + chip_cols]).to_html(index=False, classes="styled-table sortable-table", escape=False)
+    # 執行個別策略 DataFrame 產出
+    def build_res(cond_fn, sort_cols, asc_list, rename_dict=None, extra_cols=None):
+        cond = cond_fn(0)
+        res = df_merge[cond].copy()
+        res['近7日符合次數'] = eval_rolling_condition(cond_fn)[cond]
+        res["增量倍數"] = (res["成交量_0"] / res["成交量_1"]).round(2)
+        res = res.sort_values(by=sort_cols, ascending=asc_list)
+        if rename_dict:
+            res = res.rename(columns=rename_dict)
+        cols = base_cols + (extra_cols if extra_cols else ["增量倍數"]) + chip_cols
+        html = apply_color_formatting(res[cols]).to_html(index=False, classes="styled-table sortable-table", escape=False)
+        return res, html
 
-    res2 = df_merge[cond2_fn(0)].copy()
-    res2['近7日符合次數'] = eval_rolling_condition(cond2_fn)[cond2_fn(0)]
-    res2["增量倍數"] = (res2["成交量_0"] / res2["成交量_1"]).round(2)
-    res2 = res2.sort_values(by=["墊高天數", "外資連買天數", "增量倍數"], ascending=[False, False, False])
-    res2 = res2.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
-    html_tb2 = apply_color_formatting(res2[base_cols + ["墊高天數", "量增天數", "外資連買天數", "增量倍數"] + chip_cols]).to_html(index=False, classes="styled-table sortable-table", escape=False)
+    std_rename = {"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"}
 
-    res3 = df_merge[cond3_fn(0)].copy()
-    res3['近7日符合次數'] = eval_rolling_condition(cond3_fn)[cond3_fn(0)]
-    res3["增量倍數"] = (res3["成交量_0"] / res3["成交量_1"]).round(2)
-    res3 = res3.sort_values(by=["外資連買天數", "增量倍數"], ascending=[False, False])
-    res3 = res3.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)", "外資_0": "最新日外資(張)"})
-    html_tb3 = apply_color_formatting(res3[base_cols + ["最新日外資(張)", "外資連買天數", "連漲天數", "增量倍數"] + chip_cols]).to_html(index=False, classes="styled-table sortable-table", escape=False)
-
-    res4 = df_merge[cond4_fn(0)].copy()
-    res4['近7日符合次數'] = eval_rolling_condition(cond4_fn)[cond4_fn(0)]
-    res4["增量倍數"] = (res4["成交量_0"] / res4["成交量_1"]).round(2)
-    res4 = res4.sort_values(by=["投信近七日(張)", "增量倍數"], ascending=[False, False])
-    res4 = res4.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)", "外資_0": "最新日外資(張)"})
-    html_tb4 = apply_color_formatting(res4[base_cols + ["最新日外資(張)", "增量倍數"] + chip_cols]).to_html(index=False, classes="styled-table sortable-table", escape=False)
-
-    res5 = df_merge[cond5_fn(0)].copy()
-    res5['近7日符合次數'] = eval_rolling_condition(cond5_fn)[cond5_fn(0)]
-    res5["增量倍數"] = (res5["成交量_0"] / res5["成交量_1"]).round(2)
-    res5['最新法人買超(張)'] = res5['外資_0'] + res5['投信_0']
-    res5 = res5.sort_values(by=["最新法人買超(張)", "增量倍數"], ascending=[False, False])
-    res5 = res5.rename(columns={"收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)", "收盤價_1": f"{d1_s} 收盤"})
-    html_tb5 = apply_color_formatting(res5[base_cols + ["最新法人買超(張)", "增量倍數"] + chip_cols]).to_html(index=False, classes="styled-table sortable-table", escape=False)
-
-    res6 = df_merge[cond6_fn(0)].copy()
-    res6['近7日符合次數'] = eval_rolling_condition(cond6_fn)[cond6_fn(0)]
-    res6["增量倍數"] = (res6["成交量_0"] / res6["成交量_1"]).round(2)
-    res6 = res6.sort_values(by=["投信近三日(張)", "增量倍數"], ascending=[False, False])
-    res6 = res6.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
-    html_tb6 = apply_color_formatting(res6[base_cols + ["增量倍數"] + chip_cols]).to_html(index=False, classes="styled-table sortable-table", escape=False)
-
-    res7 = df_merge[cond7_fn(0)].copy()
-    res7['近7日符合次數'] = eval_rolling_condition(cond7_fn)[cond7_fn(0)]
-    res7["增量倍數"] = (res7["成交量_0"] / res7["成交量_1"]).round(2)
-    res7 = res7.sort_values(by=["投信近七日(張)", "增量倍數"], ascending=[False, False])
-    res7 = res7.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
-    html_tb7 = apply_color_formatting(res7[base_cols + ["增量倍數"] + chip_cols]).to_html(index=False, classes="styled-table sortable-table", escape=False)
-
-    res8 = df_merge[cond8_fn(0)].copy()
-    res8['近7日符合次數'] = eval_rolling_condition(cond8_fn)[cond8_fn(0)]
-    res8["增量倍數"] = (res8["成交量_0"] / res8["成交量_1"]).round(2)
-    res8 = res8.sort_values(by=["投信近七日(張)", "增量倍數"], ascending=[False, False])
-    res8 = res8.rename(columns={"收盤價_2": f"{d2_s} 收盤", "收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
-    html_tb8 = apply_color_formatting(res8[base_cols + ["增量倍數"] + chip_cols]).to_html(index=False, classes="styled-table sortable-table", escape=False)
-
-    res9 = df_merge[cond9_fn(0)].copy()
-    res9['近7日符合次數'] = eval_rolling_condition(cond9_fn)[cond9_fn(0)]
-    res9 = res9.sort_values(by=["最新漲幅(%)"], ascending=False)
-    res9 = res9.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
-    html_tb9 = apply_color_formatting(res9[base_cols + ["創5日高", "創20日高"] + chip_cols]).to_html(index=False, classes="styled-table sortable-table", escape=False)
-
-    res10 = df_merge[cond10_fn(0)].copy()
-    res10['近7日符合次數'] = eval_rolling_condition(cond10_fn)[cond10_fn(0)]
-    res10 = res10.sort_values(by=["最新漲幅(%)"], ascending=False)
-    res10 = res10.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
-    html_tb10 = apply_color_formatting(res10[base_cols + chip_cols]).to_html(index=False, classes="styled-table sortable-table", escape=False)
-
-    res11 = df_merge[cond11_fn(0)].copy()
-    res11["實體K漲幅(%)"] = ((res11["收盤價_0"] - res11["開盤價_0"]) / res11["開盤價_0"] * 100).round(2)
-    res11 = res11[res11["實體K漲幅(%)"] > 0]
-    res11['近7日符合次數'] = eval_rolling_condition(cond11_fn).loc[res11.index]
-    res11 = res11.sort_values(by=["實體K漲幅(%)"], ascending=False)
-    res11 = res11.rename(columns={"開盤價_0": f"{d0_s} 開盤", "收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
-    html_tb11 = apply_color_formatting(res11[base_cols + [f"{d0_s} 開盤", "實體K漲幅(%)"] + chip_cols]).to_html(index=False, classes="styled-table sortable-table", escape=False)
-
-    res13 = df_merge[cond13_fn(0)].copy()
-    res13['近7日符合次數'] = eval_rolling_condition(cond13_fn)[cond13_fn(0)]
-    res13["距離60日高點(%)"] = ((res13["收盤價_0"] - res13["60日最高收盤"]) / res13["60日最高收盤"] * 100).round(2)
-    res13 = res13.sort_values(by=["距離60日高點(%)", "最新漲幅(%)"], ascending=[False, False])
-    res13 = res13.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
-    html_tb13 = apply_color_formatting(res13[base_cols + ["60日最高收盤", "距離60日高點(%)"] + chip_cols]).to_html(index=False, classes="styled-table sortable-table", escape=False)
-
-    res14 = df_merge[cond14_fn(0)].copy()
-    res14['近7日符合次數'] = eval_rolling_condition(cond14_fn)[cond14_fn(0)]
-    res14["增量倍數"] = (res14["成交量_0"] / res14["成交量_1"]).round(2)
-    res14 = res14.sort_values(by=["最新漲幅(%)", "增量倍數"], ascending=[False, False])
-    res14 = res14.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)", "外資_0": "最新日外資(張)"})
-    html_tb14 = apply_color_formatting(res14[base_cols + ["最新日外資(張)", "外資連買天數", "連漲天數", "增量倍數"] + chip_cols]).to_html(index=False, classes="styled-table sortable-table", escape=False)
-
-    res15 = df_merge[cond15_fn(0)].copy()
-    res15['近7日符合次數'] = eval_rolling_condition(cond15_fn)[cond15_fn(0)]
-    res15["增量倍數"] = (res15["成交量_0"] / res15["成交量_1"]).round(2)
-    res15["20日震幅(%)"] = ((res15["收盤價_0"] - res15["20日最低收盤"]) / res15["20日最低收盤"] * 100).round(2)
-    res15["40日震幅(%)"] = ((res15["收盤價_0"] - res15["40日最低收盤"]) / res15["40日最低收盤"] * 100).round(2)
-    res15["60日震幅(%)"] = ((res15["收盤價_0"] - res15["60日最低收盤"]) / res15["60日最低收盤"] * 100).round(2)
+    res1, html_tb1 = build_res(cond1_fn, ["跳空天數", "量增天數", "增量倍數"], [False, False, False], std_rename, ["跳空天數", "量增天數", "增量倍數"])
+    res2, html_tb2 = build_res(cond2_fn, ["墊高天數", "外資連買天數", "增量倍數"], [False, False, False], std_rename, ["墊高天數", "量增天數", "外資連買天數", "增量倍數"])
+    res3, html_tb3 = build_res(cond3_fn, ["外資連買天數", "增量倍數"], [False, False], {**std_rename, "外資_0": "最新日外資(張)"}, ["最新日外資(張)", "外資連買天數", "連漲天數", "增量倍數"])
+    res4, html_tb4 = build_res(cond4_fn, ["投信近七日(張)", "增量倍數"], [False, False], {**std_rename, "外資_0": "最新日外資(張)"}, ["最新日外資(張)", "增量倍數"])
+    res5, html_tb5 = build_res(cond5_fn, ["最新法人買超(張)", "增量倍數"], [False, False], {"收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)", "收盤價_1": f"{d1_s} 收盤"}, ["最新法人買超(張)", "增量倍數"])
+    res6, html_tb6 = build_res(cond6_fn, ["投信近三日(張)", "增量倍數"], [False, False], std_rename)
+    res7, html_tb7 = build_res(cond7_fn, ["投信近七日(張)", "增量倍數"], [False, False], std_rename)
+    res8, html_tb8 = build_res(cond8_fn, ["投信近七日(張)", "增量倍數"], [False, False], {"收盤價_2": f"{d2_s} 收盤", "收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
+    res9, html_tb9 = build_res(cond9_fn, ["最新漲幅(%)"], [False], std_rename, ["創5日高", "創20日高"])
+    res10, html_tb10 = build_res(cond10_fn, ["最新漲幅(%)"], [False], std_rename, [])
+    res11, html_tb11 = build_res(cond11_fn, ["實體K漲幅(%)"], [False], {"開盤價_0": f"{d0_s} 開盤", "收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"}, [f"{d0_s} 開盤", "實體K漲幅(%)"])
+    res13, html_tb13 = build_res(cond13_fn, ["距離60日高點(%)", "最新漲幅(%)"], [False, False], std_rename, ["60日最高收盤", "距離60日高點(%)"])
+    res14, html_tb14 = build_res(cond14_fn, ["最新漲幅(%)", "增量倍數"], [False, False], {**std_rename, "外資_0": "最新日外資(張)"}, ["最新日外資(張)", "外資連買天數", "連漲天數", "增量倍數"])
+    res15, html_tb15 = build_res(cond15_fn, ["60日震幅(%)", "增量倍數"], [True, False], std_rename, ["20日震幅(%)", "40日震幅(%)", "60日震幅(%)", "增量倍數"])
     res15_strict = res15[(res15['創60日最大量']) & (res15['60日震幅(%)'] <= 10.0)]
-    res15 = res15.sort_values(by=["60日震幅(%)", "增量倍數"], ascending=[True, False]) 
-    res15 = res15.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
-    html_tb15 = apply_color_formatting(res15[base_cols + ["20日震幅(%)", "40日震幅(%)", "60日震幅(%)", "增量倍數"] + chip_cols]).to_html(index=False, classes="styled-table sortable-table", escape=False)
+    res16, html_tb16 = build_res(cond16_fn, ["最新漲幅(%)", "增量倍數"], [False, False], std_rename, ["最大量日最高價", "增量倍數"])
+    res17, html_tb17 = build_res(cond17_fn, ["最新漲幅(%)", "增量倍數"], [False, False], std_rename, ["120日最高收盤", "增量倍數"])
+    res18, html_tb18 = build_res(cond18_fn, ["最新營收月增率(%)", "最新漲幅(%)"], [False, False], std_rename, ["最新營收月增率(%)", "增量倍數"])
+    res19, html_tb19 = build_res(cond19_fn, ["最新營收月增率(%)", "最新漲幅(%)"], [False, False], std_rename, ["最新營收月增率(%)", "增量倍數"])
+    res20, html_tb20 = build_res(cond20_fn, ["外資_0", "最新漲幅(%)"], [False, False], {**std_rename, "外資_0": "最新日外資(張)", "外資_1": "前1日外資(張)", "外資_2": "前2日外資(張)"}, ["最新日外資(張)", "前1日外資(張)", "前2日外資(張)", "增量倍數"])
+    res22, html_tb22 = build_res(cond22_fn, ["最新漲幅(%)", "增量倍數"], [False, False], std_rename)
+    res23, html_tb23 = build_res(cond23_fn, ["最新漲幅(%)", "增量倍數"], [False, False], std_rename, ["近10日最大量日最高價", "增量倍數"])
+    res24, html_tb24 = build_res(cond24_fn, ["最新漲幅(%)", "增量倍數"], [False, False], std_rename, ["千張大戶比例(%)", "增量倍數"])
+    res25, html_tb25 = build_res(cond25_fn, ["千張大戶比例(%)", "最新漲幅(%)"], [False, False], std_rename, ["千張大戶比例(%)", "增量倍數"])
 
-    res16 = df_merge[cond16_fn(0)].copy()
-    res16['近7日符合次數'] = eval_rolling_condition(cond16_fn)[cond16_fn(0)]
-    res16["增量倍數"] = (res16["成交量_0"] / res16["成交量_1"]).round(2)
-    res16 = res16.sort_values(by=["最新漲幅(%)", "增量倍數"], ascending=[False, False])
-    res16 = res16.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
-    html_tb16 = apply_color_formatting(res16[base_cols + ["最大量日最高價", "增量倍數"] + chip_cols]).to_html(index=False, classes="styled-table sortable-table", escape=False)
+    # ========================================================
+    # 【升級】策略 26: 9 月三策略組合挖掘回測 (任選三組，排除 18, 19, 24, 25)
+    # ========================================================
+    print("🔬 啟動策略 26：9 月 (2026/09/01~2026/09/30) 三策略組合高勝率回測...")
 
-    res17 = df_merge[cond17_fn(0)].copy()
-    res17['近7日符合次數'] = eval_rolling_condition(cond17_fn)[cond17_fn(0)]
-    res17["增量倍數"] = (res17["成交量_0"] / res17["成交量_1"]).round(2)
-    res17 = res17.sort_values(by=["最新漲幅(%)", "增量倍數"], ascending=[False, False])
-    res17 = res17.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
-    html_tb17 = apply_color_formatting(res17[base_cols + ["120日最高收盤", "增量倍數"] + chip_cols]).to_html(index=False, classes="styled-table sortable-table", escape=False)
-
-    res18 = df_merge[cond18_fn(0)].copy()
-    res18['近7日符合次數'] = eval_rolling_condition(cond18_fn)[cond18_fn(0)]
-    res18["增量倍數"] = (res18["成交量_0"] / res18["成交量_1"]).round(2)
-    res18 = res18.sort_values(by=["最新營收月增率(%)", "最新漲幅(%)"], ascending=[False, False])
-    res18 = res18.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
-    html_tb18 = apply_color_formatting(res18[base_cols + ["最新營收月增率(%)", "增量倍數"] + chip_cols]).to_html(index=False, classes="styled-table sortable-table", escape=False)
-
-    res19 = df_merge[cond19_fn(0)].copy()
-    res19['近7日符合次數'] = eval_rolling_condition(cond19_fn)[cond19_fn(0)]
-    res19["增量倍數"] = (res19["成交量_0"] / res19["成交量_1"]).round(2)
-    res19 = res19.sort_values(by=["最新營收月增率(%)", "最新漲幅(%)"], ascending=[False, False])
-    res19 = res19.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
-    html_tb19 = apply_color_formatting(res19[base_cols + ["最新營收月增率(%)", "增量倍數"] + chip_cols]).to_html(index=False, classes="styled-table sortable-table", escape=False)
-
-    res20 = df_merge[cond20_fn(0)].copy()
-    res20['近7日符合次數'] = eval_rolling_condition(cond20_fn)[cond20_fn(0)]
-    res20["增量倍數"] = (res20["成交量_0"] / res20["成交量_1"]).round(2)
-    res20 = res20.sort_values(by=["外資_0", "最新漲幅(%)"], ascending=[False, False])
-    res20 = res20.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)", "外資_0": "最新日外資(張)", "外資_1": "前1日外資(張)", "外資_2": "前2日外資(張)"})
-    html_tb20 = apply_color_formatting(res20[base_cols + ["最新日外資(張)", "前1日外資(張)", "前2日外資(張)", "增量倍數"] + chip_cols]).to_html(index=False, classes="styled-table sortable-table", escape=False)
-
-    res22 = df_merge[cond22_fn(0)].copy()
-    res22['近7日符合次數'] = eval_rolling_condition(cond22_fn)[cond22_fn(0)]
-    res22["增量倍數"] = (res22["成交量_0"] / res22["成交量_1"]).round(2)
-    res22 = res22.sort_values(by=["最新漲幅(%)", "增量倍數"], ascending=[False, False])
-    res22 = res22.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
-    html_tb22 = apply_color_formatting(res22[base_cols + ["增量倍數"] + chip_cols]).to_html(index=False, classes="styled-table sortable-table", escape=False)
-
-    res23 = df_merge[cond23_fn(0)].copy()
-    res23['近7日符合次數'] = eval_rolling_condition(cond23_fn)[cond23_fn(0)]
-    res23["增量倍數"] = (res23["成交量_0"] / res23["成交量_1"]).round(2)
-    res23 = res23.sort_values(by=["最新漲幅(%)", "增量倍數"], ascending=[False, False])
-    res23 = res23.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
-    html_tb23 = apply_color_formatting(res23[base_cols + ["近10日最大量日最高價", "增量倍數"] + chip_cols]).to_html(index=False, classes="styled-table sortable-table", escape=False)
-
-    res24 = df_merge[cond24_fn(0)].copy()
-    res24['近7日符合次數'] = eval_rolling_condition(cond24_fn)[cond24_fn(0)]
-    res24["增量倍數"] = (res24["成交量_0"] / res24["成交量_1"]).round(2)
-    res24 = res24.sort_values(by=["最新漲幅(%)", "增量倍數"], ascending=[False, False])
-    res24 = res24.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
-    html_tb24 = apply_color_formatting(res24[base_cols + ["千張大戶比例(%)", "增量倍數"] + chip_cols]).to_html(index=False, classes="styled-table sortable-table", escape=False)
-
-    res25 = df_merge[cond25_fn(0)].copy()
-    res25['近7日符合次數'] = eval_rolling_condition(cond25_fn)[cond25_fn(0)]
-    res25["增量倍數"] = (res25["成交量_0"] / res25["成交量_1"]).round(2)
-    res25 = res25.sort_values(by=["千張大戶比例(%)", "最新漲幅(%)"], ascending=[False, False])
-    res25 = res25.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
-    html_tb25 = apply_color_formatting(res25[base_cols + ["千張大戶比例(%)", "增量倍數"] + chip_cols]).to_html(index=False, classes="styled-table sortable-table", escape=False)
-
-    # ==========================
-    # 【全新】策略 26: 9月雙策略組合回測框架 (嚴格排除 18, 19, 24, 25 避免穿透)
-    # ==========================
-    print("🔬 啟動策略 26：9 月 (2026/09/01~2026/09/30) 雙策略組合挖掘回測...")
-
-    # 可歷史回放的策略池（19 個）
     cand_strategies = [
         ("1.跳空不補", cond1_fn),
         ("2.連續墊高", cond2_fn),
@@ -1232,12 +1106,10 @@ def main():
         ("23.突破10日最大量", cond23_fn),
     ]
 
-    # 找出 9 月交易日 index
     sept_indices = [i for i, (d, _) in enumerate(days_data) if "20260901" <= d <= "20260930"]
     if not sept_indices:
-        sept_indices = list(range(5, min(25, len(days_data)-5))) # 備用天數範圍
+        sept_indices = list(range(5, min(25, len(days_data)-5)))
 
-    # 10/01 開盤 至 10/08 收盤 index
     idx_1001 = next((i for i, (d, _) in enumerate(days_data) if d == "20261001"), None)
     if idx_1001 is None:
         oct_indices = [i for i, (d, _) in enumerate(days_data) if d.startswith("202610")]
@@ -1248,118 +1120,133 @@ def main():
     col_open_1001 = f"開盤價_{idx_1001}" if f"開盤價_{idx_1001}" in df_merge.columns else f"收盤價_{idx_1001}"
     col_close_1008 = f"收盤價_{idx_1008}"
 
-    # 預先計算各候選策略在 9 月各天的判定遮罩（極速向量化運算）
-    precomputed_masks = {}
+    # 極速向量化預算：每個策略在 9 月的 (N, D) 布林矩陣
+    N = len(df_merge)
+    D = len(sept_indices)
+    strat_matrices = {}
+
     for st_name, fn in cand_strategies:
-        precomputed_masks[st_name] = {}
-        for k in sept_indices:
+        mat = np.zeros((N, D), dtype=bool)
+        for d_idx, k in enumerate(sept_indices):
             try:
-                precomputed_masks[st_name][k] = fn(k).fillna(False)
+                s = fn(k).fillna(False).values
+                mat[:, d_idx] = s
             except Exception:
-                precomputed_masks[st_name][k] = pd.Series(False, index=df_merge.index)
+                pass
+        strat_matrices[st_name] = mat
 
-    # 兩兩組合測試
+    # 預算 10/01 開盤 至 10/08 收盤的實際報酬
+    open_1001 = pd.to_numeric(df_merge[col_open_1001], errors='coerce').values
+    close_1008 = pd.to_numeric(df_merge[col_close_1008], errors='coerce').values
+    valid_ret_mask = (open_1001 > 0) & (close_1008 > 0) & np.isfinite(open_1001) & np.isfinite(close_1008)
+    returns_arr = np.zeros(N, dtype=float)
+    returns_arr[valid_ret_mask] = ((close_1008[valid_ret_mask] - open_1001[valid_ret_mask]) / open_1001[valid_ret_mask]) * 100
+
+    # 窮舉三策略組合（969組）
+    combo_triplets = list(itertools.combinations(cand_strategies, 3))
     combo_records = []
-    combo_pairs = list(itertools.combinations(cand_strategies, 2))
 
-    for (name_a, fn_a), (name_b, fn_b) in combo_pairs:
-        # 找出 9 月期間「曾同時命中」的股票
-        combo_hit_mask = pd.Series(False, index=df_merge.index)
-        for k in sept_indices:
-            combo_hit_mask |= (precomputed_masks[name_a][k] & precomputed_masks[name_b][k])
-
-        matched_df = df_merge[combo_hit_mask].copy()
-        if matched_df.empty:
+    for (name_a, fn_a), (name_b, fn_b), (name_c, fn_c) in combo_triplets:
+        # 9 月期間任一天三策略同時命中
+        hit_mask = (strat_matrices[name_a] & strat_matrices[name_b] & strat_matrices[name_c]).any(axis=1)
+        sub_mask = hit_mask & valid_ret_mask
+        n_samples = int(np.sum(sub_mask))
+        if n_samples == 0:
             continue
 
-        # 計算 10/01 開盤 -> 10/08 收盤實際漲幅
-        valid_df = matched_df[(matched_df[col_open_1001] > 0) & (matched_df[col_close_1008] > 0)].copy()
-        if valid_df.empty:
-            continue
-
-        returns = ((valid_df[col_close_1008] - valid_df[col_open_1001]) / valid_df[col_open_1001]) * 100
-        n_samples = len(returns)
-        mean_ret = round(returns.mean(), 2)
-        median_ret = round(returns.median(), 2)
-        win_rate = round(((returns > 0).sum() / n_samples) * 100, 2)
+        sub_ret = returns_arr[sub_mask]
+        up_count = int(np.sum(sub_ret > 0))
+        win_rate = round((up_count / n_samples) * 100, 2)
+        mean_ret = round(float(np.mean(sub_ret)), 2)
+        median_ret = round(float(np.median(sub_ret)), 2)
 
         combo_records.append({
             "name_a": name_a,
             "name_b": name_b,
+            "name_c": name_c,
             "fn_a": fn_a,
             "fn_b": fn_b,
-            "策略組合": f"{name_a} ＋ {name_b}",
+            "fn_c": fn_c,
+            "策略組合": f"{name_a} ＋ {name_b} ＋ {name_c}",
+            "上漲率(%)": win_rate,
             "平均漲幅(%)": mean_ret,
             "中位數漲幅(%)": median_ret,
-            "上漲率(%)": win_rate,
             "樣本數": n_samples,
-            "上漲檔數": (returns > 0).sum(),
-            "下跌檔數": (returns <= 0).sum()
+            "上漲檔數": up_count,
+            "下跌檔數": n_samples - up_count
         })
 
     df_combos = pd.DataFrame(combo_records)
-    # 四重排序：平均漲幅 → 中位數漲幅 → 上漲率 → 樣本數
+    # 依使用者需求：優先以上漲率（勝率）最高排序，次排平均漲幅、中位數、樣本數
     if not df_combos.empty:
         df_combos = df_combos.sort_values(
-            by=["平均漲幅(%)", "中位數漲幅(%)", "上漲率(%)", "樣本數"],
+            by=["上漲率(%)", "平均漲幅(%)", "中位數漲幅(%)", "樣本數"],
             ascending=[False, False, False, False]
         ).reset_index(drop=True)
     else:
-        df_combos = pd.DataFrame(columns=["策略組合", "平均漲幅(%)", "中位數漲幅(%)", "上漲率(%)", "樣本數", "上漲檔數", "下跌檔數"])
+        df_combos = pd.DataFrame(columns=["策略組合", "上漲率(%)", "平均漲幅(%)", "中位數漲幅(%)", "樣本數", "上漲檔數", "下跌檔數"])
 
-    # 標記前 5 名
     df_combos["排名"] = range(1, len(df_combos) + 1)
-    df_combos_show = df_combos[["排名", "策略組合", "平均漲幅(%)", "中位數漲幅(%)", "上漲率(%)", "樣本數", "上漲檔數", "下跌檔數"]].copy()
+    df_combos_show = df_combos[["排名", "策略組合", "上漲率(%)", "平均漲幅(%)", "中位數漲幅(%)", "樣本數", "上漲檔數", "下跌檔數"]].copy()
+    df_combos_show["上漲率(%)"] = df_combos_show["上漲率(%)"].apply(lambda x: f"<b style='color:#dc2626;'>{x:.2f}%</b>" if x >= 50 else f"<span style='color:#16a34a;'>{x:.2f}%</span>")
     df_combos_show["平均漲幅(%)"] = df_combos_show["平均漲幅(%)"].apply(color_pct)
     df_combos_show["中位數漲幅(%)"] = df_combos_show["中位數漲幅(%)"].apply(color_pct)
-    df_combos_show["上漲率(%)"] = df_combos_show["上漲率(%)"].apply(lambda x: f"<b style='color:#dc2626;'>{x:.2f}%</b>" if x >= 50 else f"<span style='color:#16a34a;'>{x:.2f}%</span>")
 
     html_tb26 = df_combos_show.to_html(index=False, classes="styled-table backtest-table sortable-table", escape=False)
 
-    # ==========================
-    # 【全新】將前五名最佳組合分別設定為策略 27 ~ 31 的即時選股
-    # ==========================
+    # ========================================================
+    # 【建立策略 27~31】使用勝率前五名搭配，並以「最新收盤日」挑選建議股票
+    # ========================================================
     top5_combos = df_combos.head(5).to_dict("records")
     strat_results_27_31 = {}
+    rank_labels = ["首選", "第二", "第三", "第四", "第五"]
 
     for idx, r_num in enumerate([27, 28, 29, 30, 31]):
         if idx < len(top5_combos):
             item = top5_combos[idx]
             c_name = item["策略組合"]
-            f_a, f_b = item["fn_a"], item["fn_b"]
-            # 最新日（k=0）同時符合兩策略
-            cond_today = f_a(0) & f_b(0)
+            f_a, f_b, f_c = item["fn_a"], item["fn_b"], item["fn_c"]
+            # 最新日（k=0）同時符合此三策略
+            cond_today = f_a(0) & f_b(0) & f_c(0)
             res_df = df_merge[cond_today].copy()
-            res_df['近7日符合次數'] = eval_rolling_condition(lambda k: f_a(k) & f_b(k))[cond_today]
+            res_df['近7日符合次數'] = eval_rolling_condition(lambda k: f_a(k) & f_b(k) & f_c(k))[cond_today]
             res_df["增量倍數"] = (res_df["成交量_0"] / res_df["成交量_1"]).round(2)
             res_df = res_df.sort_values(by=["最新漲幅(%)", "增量倍數"], ascending=[False, False])
-            res_df = res_df.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
-            table_html = apply_color_formatting(res_df[base_cols + ["增量倍數"] + chip_cols]).to_html(index=False, classes="styled-table sortable-table", escape=False)
+            res_df = res_df.rename(columns=std_rename)
+
+            if not res_df.empty:
+                table_html = apply_color_formatting(res_df[base_cols + ["增量倍數"] + chip_cols]).to_html(index=False, classes="styled-table sortable-table", escape=False)
+            else:
+                table_html = "<div style='padding: 30px; text-align: center; color: #64748b; font-size: 13px;'>今日最新盤後無同時符合此三策略之股票（可持續追蹤該組合條件）</div>"
+
             strat_results_27_31[r_num] = {
-                "name": f"{r_num}. 最佳組合{idx+1} ({c_name})",
-                "short_name": f"{r_num}. 組合{idx+1}",
+                "name": f"{r_num}. 組合{rank_labels[idx]} ({c_name})",
+                "short_name": f"{r_num}. 組合{rank_labels[idx]}",
                 "combo_name": c_name,
                 "df": res_df,
                 "html": table_html,
                 "count": len(res_df),
+                "win_rate": item["上漲率(%)"],
                 "avg_ret": item["平均漲幅(%)"],
-                "win_rate": item["上漲率(%)"]
+                "median_ret": item["中位數漲幅(%)"],
+                "samples": item["樣本數"]
             }
         else:
-            # 備用防空
             strat_results_27_31[r_num] = {
-                "name": f"{r_num}. 最佳組合{idx+1}",
-                "short_name": f"{r_num}. 組合{idx+1}",
+                "name": f"{r_num}. 組合{rank_labels[idx]}",
+                "short_name": f"{r_num}. 組合{rank_labels[idx]}",
                 "combo_name": "無足夠樣本",
                 "df": pd.DataFrame(),
                 "html": "<p style='text-align:center;'>目前無符合股票</p>",
                 "count": 0,
-                "avg_ret": "0.0%",
-                "win_rate": "0.0%"
+                "win_rate": 0.0,
+                "avg_ret": 0.0,
+                "median_ret": 0.0,
+                "samples": 0
             }
 
-    # 策略 21：各策略隔日勝率回測
-    print("🔬 正在執行過去 30 天各策略隔日勝率回測計算...")
+    # 策略 21：單策略歷史隔日勝率回測
+    print("🔬 正在執行過去 30 天單策略隔日勝率回測計算...")
     backtest_funcs = [
         ("1.跳空不補", cond1_fn), ("2.連續墊高", cond2_fn), ("3.量增法人買", cond3_fn),
         ("4.創20日新高", cond4_fn), ("5.旱地拔蔥", cond5_fn), ("6.創五日高", cond6_fn),
@@ -1416,10 +1303,10 @@ def main():
         ("20.外資越買越多出量", res20), ("22.高勝率基因複合", res22),
         ("23.突破10日最大量", res23), ("24.飆股基因起漲", res24),
         ("25.倚強科模式複製", res25),
-        ("27.組合冠軍", strat_results_27_31[27]["df"]),
-        ("28.組合亞軍", strat_results_27_31[28]["df"]),
-        ("29.組合季軍", strat_results_27_31[29]["df"]),
-        ("30.組合殿軍", strat_results_27_31[30]["df"]),
+        ("27.組合首選", strat_results_27_31[27]["df"]),
+        ("28.組合第二", strat_results_27_31[28]["df"]),
+        ("29.組合第三", strat_results_27_31[29]["df"]),
+        ("30.組合第四", strat_results_27_31[30]["df"]),
         ("31.組合第五", strat_results_27_31[31]["df"]),
     ]
     
@@ -1438,13 +1325,13 @@ def main():
         res12 = pd.merge(df_hits, df_merge, on="股票代號", how="inner")
         res12['近7日符合次數'] = res12['入選次數'].apply(lambda x: f"命中 {x} 個策略")
         res12 = res12.sort_values(by=["入選次數", "最新漲幅(%)"], ascending=[False, False]).head(50)
-        res12 = res12.rename(columns={"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
+        res12 = res12.rename(columns=std_rename)
         cols12 = base_cols + ["入選次數", "符合策略"] + chip_cols
         html_tb12 = apply_color_formatting(res12[cols12]).to_html(index=False, classes="styled-table sortable-table", escape=False)
     else:
         html_tb12 = "<p style='text-align:center;'>目前無任何股票入選預設策略</p>"
 
-    # 可收合警告
+    # 製作可收合警告區塊
     warning_html = ""
     if WARNINGS:
         unique_warns = sorted(set(WARNINGS))
@@ -1790,7 +1677,7 @@ def main():
 
         <div class="tabs-wrapper" id="tabsHeader">
             <button class="tab-btn active" onclick="openStrategy(event, 'Strat12')">🌟 12. 綜合排行</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Strat26')">🧪 26. 9月組合挖掘</button>
+            <button class="tab-btn" onclick="openStrategy(event, 'Strat26')">🧪 26. 9月三組合回測</button>
             <button class="tab-btn" onclick="openStrategy(event, 'Strat27')">🏆 27. 組合首選</button>
             <button class="tab-btn" onclick="openStrategy(event, 'Strat28')">🥈 28. 組合第二</button>
             <button class="tab-btn" onclick="openStrategy(event, 'Strat29')">🥉 29. 組合第三</button>
@@ -1835,17 +1722,18 @@ def main():
 
             <div id="Strat26" class="tabcontent">
                 <div class="info-box">
-                    <p>🎯 <b>策略 26：9 月雙策略組合挖掘回測框架</b></p>
-                    <p>研究 2026/09/01～2026/09/30 期間兩兩策略同時命中標的，在 <b>10/01 開盤至 10/08 收盤</b> 的實際波段績效（依平均漲幅、中位數、勝率排序，排除 18, 19, 24, 25）。前 5 名已部署至策略 27~31。</p>
-                    <div class="count-badge">📊 171 組雙策略排序總覽</div>
+                    <p>🎯 <b>策略 26：9 月三策略組合挖掘回測框架</b></p>
+                    <p>回測 2026/09/01～2026/09/30 期間任三策略同時命中之個股，以 <b>10/01 開盤至 10/08 收盤</b> 計算實際績效，依上漲機率（勝率）最高前五名搭配自動建構策略 27~31（排除 18, 19, 24, 25 避免快照未來資訊）。</p>
+                    <div class="count-badge">📊 969 組三策略搭配排序總覽</div>
                 </div>
                 <div class="table-container">{html_tb26}</div>
             </div>
 
             <div id="Strat27" class="tabcontent">
                 <div class="info-box">
-                    <p>🎯 <b>策略 27：9 月組合冠軍 ➔ 最新選股</b></p>
-                    <p><b>最佳組合：</b> {strat_results_27_31[27]["combo_name"]}（9月回測平均漲幅：{strat_results_27_31[27]["avg_ret"]}%，勝率：{strat_results_27_31[27]["win_rate"]}%）</p>
+                    <p>🎯 <b>策略 27：9 月組合首選 ➔ 最新選股建議</b></p>
+                    <p><b>三策略搭配：</b> {strat_results_27_31[27]["combo_name"]}</p>
+                    <p><b>歷史表現：</b> 上漲率 <b>{strat_results_27_31[27]["win_rate"]}%</b> | 平均漲幅 {strat_results_27_31[27]["avg_ret"]}% | 樣本數 {strat_results_27_31[27]["samples"]} 檔</p>
                     <div class="count-badge">今日符合：<span id="count_Strat27">{strat_results_27_31[27]["count"]}</span> 檔</div>
                 </div>
                 <div class="table-container">{strat_results_27_31[27]["html"]}</div>
@@ -1853,8 +1741,9 @@ def main():
 
             <div id="Strat28" class="tabcontent">
                 <div class="info-box">
-                    <p>🎯 <b>策略 28：9 月組合亞軍 ➔ 最新選股</b></p>
-                    <p><b>最佳組合：</b> {strat_results_27_31[28]["combo_name"]}（9月回測平均漲幅：{strat_results_27_31[28]["avg_ret"]}%，勝率：{strat_results_27_31[28]["win_rate"]}%）</p>
+                    <p>🎯 <b>策略 28：9 月組合第二 ➔ 最新選股建議</b></p>
+                    <p><b>三策略搭配：</b> {strat_results_27_31[28]["combo_name"]}</p>
+                    <p><b>歷史表現：</b> 上漲率 <b>{strat_results_27_31[28]["win_rate"]}%</b> | 平均漲幅 {strat_results_27_31[28]["avg_ret"]}% | 樣本數 {strat_results_27_31[28]["samples"]} 檔</p>
                     <div class="count-badge">今日符合：<span id="count_Strat28">{strat_results_27_31[28]["count"]}</span> 檔</div>
                 </div>
                 <div class="table-container">{strat_results_27_31[28]["html"]}</div>
@@ -1862,8 +1751,9 @@ def main():
 
             <div id="Strat29" class="tabcontent">
                 <div class="info-box">
-                    <p>🎯 <b>策略 29：9 月組合季軍 ➔ 最新選股</b></p>
-                    <p><b>最佳組合：</b> {strat_results_27_31[29]["combo_name"]}（9月回測平均漲幅：{strat_results_27_31[29]["avg_ret"]}%，勝率：{strat_results_27_31[29]["win_rate"]}%）</p>
+                    <p>🎯 <b>策略 29：9 月組合第三 ➔ 最新選股建議</b></p>
+                    <p><b>三策略搭配：</b> {strat_results_27_31[29]["combo_name"]}</p>
+                    <p><b>歷史表現：</b> 上漲率 <b>{strat_results_27_31[29]["win_rate"]}%</b> | 平均漲幅 {strat_results_27_31[29]["avg_ret"]}% | 樣本數 {strat_results_27_31[29]["samples"]} 檔</p>
                     <div class="count-badge">今日符合：<span id="count_Strat29">{strat_results_27_31[29]["count"]}</span> 檔</div>
                 </div>
                 <div class="table-container">{strat_results_27_31[29]["html"]}</div>
@@ -1871,8 +1761,9 @@ def main():
 
             <div id="Strat30" class="tabcontent">
                 <div class="info-box">
-                    <p>🎯 <b>策略 30：9 月組合殿軍 ➔ 最新選股</b></p>
-                    <p><b>最佳組合：</b> {strat_results_27_31[30]["combo_name"]}（9月回測平均漲幅：{strat_results_27_31[30]["avg_ret"]}%，勝率：{strat_results_27_31[30]["win_rate"]}%）</p>
+                    <p>🎯 <b>策略 30：9 月組合第四 ➔ 最新選股建議</b></p>
+                    <p><b>三策略搭配：</b> {strat_results_27_31[30]["combo_name"]}</p>
+                    <p><b>歷史表現：</b> 上漲率 <b>{strat_results_27_31[30]["win_rate"]}%</b> | 平均漲幅 {strat_results_27_31[30]["avg_ret"]}% | 樣本數 {strat_results_27_31[30]["samples"]} 檔</p>
                     <div class="count-badge">今日符合：<span id="count_Strat30">{strat_results_27_31[30]["count"]}</span> 檔</div>
                 </div>
                 <div class="table-container">{strat_results_27_31[30]["html"]}</div>
@@ -1880,117 +1771,27 @@ def main():
 
             <div id="Strat31" class="tabcontent">
                 <div class="info-box">
-                    <p>🎯 <b>策略 31：9 月組合第五 ➔ 最新選股</b></p>
-                    <p><b>最佳組合：</b> {strat_results_27_31[31]["combo_name"]}（9月回測平均漲幅：{strat_results_27_31[31]["avg_ret"]}%，勝率：{strat_results_27_31[31]["win_rate"]}%）</p>
+                    <p>🎯 <b>策略 31：9 月組合第五 ➔ 最新選股建議</b></p>
+                    <p><b>三策略搭配：</b> {strat_results_27_31[31]["combo_name"]}</p>
+                    <p><b>歷史表現：</b> 上漲率 <b>{strat_results_27_31[31]["win_rate"]}%</b> | 平均漲幅 {strat_results_27_31[31]["avg_ret"]}% | 樣本數 {strat_results_27_31[31]["samples"]} 檔</p>
                     <div class="count-badge">今日符合：<span id="count_Strat31">{strat_results_27_31[31]["count"]}</span> 檔</div>
                 </div>
                 <div class="table-container">{strat_results_27_31[31]["html"]}</div>
             </div>
 
-            <div id="Strat25" class="tabcontent">
-                <div class="info-box">
-                    <p>🎯 <b>策略 25：倚強科模式複製</b> 複製倚強科(3219)大漲前夕特徵：1. 千張大戶比例 &ge; 60% | 2. 均線多頭發散 (收盤 > 5MA > 20MA) | 3. 今日出量 &ge; 1.5倍 | 4. 剛起漲區間 (近10日漲幅 3%~25%) | 5. 法人無賣壓。</p>
-                    <div class="count-badge">符合：<span id="count_Strat25">{len(res25)}</span> 檔</div>
-                </div>
-                <div class="table-container">{html_tb25}</div>
-            </div>
-
-            <div id="Strat24" class="tabcontent">
-                <div class="info-box">
-                    <p>🎯 <b>策略 24：飆股基因複製篩選器</b> 複製過去10天飆漲逾40%個股的主力籌碼與量價共同特徵：鎖定近10日漲幅 5%~25% 起漲甜蜜區、近5日至少4天收紅、今日出量 &ge; 1.2倍、千張大戶持股高（或外資買超）、投信無賣壓。</p>
-                    <div class="count-badge">符合：<span id="count_Strat24">{len(res24)}</span> 檔</div>
-                </div>
-                <div class="table-container">{html_tb24}</div>
-            </div>
-
-            <div id="Strat23" class="tabcontent">
-                <div class="info-box">
-                    <p>🎯 <b>策略 23：突破過去10天最大量高點</b> 最新收盤價正式突破過去 10 個交易日內成交量最大那一天的當日最高價（消化主力換手量壓力）。</p>
-                    <div class="count-badge">符合：<span id="count_Strat23">{len(res23)}</span> 檔</div>
-                </div>
-                <div class="table-container">{html_tb23}</div>
-            </div>
-
-            <div id="Strat22" class="tabcontent">
-                <div class="info-box">
-                    <p>🎯 <b>策略 22：高勝率基因精選</b> 融合回測第 1 名「創五日高+跳空」、第 2 名「創120日高」、第 3 名「連續墊高」之精華。具備創高、跳空不補、連二紅且外資投信連三日無賣出。</p>
-                    <div class="count-badge">符合：<span id="count_Strat22">{len(res22)}</span> 檔</div>
-                </div>
-                <div class="table-container">{html_tb22}</div>
-            </div>
-
-            <div id="Strat21" class="tabcontent">
-                <div class="info-box">
-                    <p>🎯 <b>策略 21：30天歷史回測</b> 統計各策略在過去 30 個交易日內選出的個股，在「隔天收盤為紅盤」的歷史機率與平均漲跌幅度。</p>
-                    <div class="count-badge">📊 依上漲勝率排行</div>
-                </div>
-                <div class="table-container">{html_tb21}</div>
-            </div>
-
-            <div id="Strat20" class="tabcontent">
-                <div class="info-box">
-                    <p>🎯 <b>選股邏輯：</b> 1. 外資連三日買超且買超張數遞增 (越買越多) | 2. 最新一日出量 (&ge; 1.2倍) | 3. 股價收紅。</p>
-                    <div class="count-badge">符合：<span id="count_Strat20">{len(res20)}</span> 檔</div>
-                </div>
-                <div class="table-container">{html_tb20}</div>
-            </div>
-
-            <div id="Strat19" class="tabcontent">
-                <div class="info-box">
-                    <p>🎯 <b>選股邏輯：</b> 1. 最新一個月營收為前一個月的 1.5 倍以上 (月增率 &ge; 50%) | 2. 今日第一天出量 (&ge; 1.2倍且昨未爆量)。</p>
-                    <div class="count-badge">符合：<span id="count_Strat19">{len(res19)}</span> 檔</div>
-                </div>
-                <div class="table-container">{html_tb19}</div>
-            </div>
-
-            <div id="Strat18" class="tabcontent">
-                <div class="info-box">
-                    <p>🎯 <b>選股邏輯：</b> 1. 連續三個月營收月增 (MoM) | 2. 今日第一天出量 (&ge; 1.2倍且昨未爆量) | 3. 股價收紅。法人買賣超於表內呈現。</p>
-                    <div class="count-badge">符合：<span id="count_Strat18">{len(res18)}</span> 檔</div>
-                </div>
-                <div class="table-container">{html_tb18}</div>
-            </div>
-
-            <div id="Strat17" class="tabcontent">
-                <div class="info-box">
-                    <p>🎯 <b>選股邏輯：</b> 最新收盤價大於過去 120 個交易日內每一天的收盤價 (半年新高)。</p>
-                    <div class="count-badge">符合：<span id="count_Strat17">{len(res17)}</span> 檔</div>
-                </div>
-                <div class="table-container">{html_tb17}</div>
-            </div>
-
-            <div id="Strat16" class="tabcontent">
-                <div class="info-box">
-                    <p>🎯 <b>選股邏輯：</b> 1. 突破60日成交量最大當日高點 | 2. 第一天剛突破 | 3. 外資與投信近七天無賣出。</p>
-                    <div class="count-badge">符合：<span id="count_Strat16">{len(res16)}</span> 檔</div>
-                </div>
-                <div class="table-container">{html_tb16}</div>
-            </div>
-
-            <div id="Strat15" class="tabcontent">
-                <div class="info-box">
-                    <p>🎯 <b>選股邏輯：</b> 收盤價創 60 日新高，且量增 1.2 倍，底部區間壓縮突破。</p>
-                    <div class="count-badge">符合：<span id="count_Strat15">{len(res15)}</span> 檔</div>
-                </div>
-                <div class="table-container">{html_tb15}</div>
-            </div>
-
-            <div id="Strat14" class="tabcontent">
-                <div class="info-box">
-                    <p>🎯 <b>選股邏輯：</b> 創 20 日新高、量增，且法人（外資、投信）過去 7 天皆無賣出。</p>
-                    <div class="count-badge">符合：<span id="count_Strat14">{len(res14)}</span> 檔</div>
-                </div>
-                <div class="table-container">{html_tb14}</div>
-            </div>
-
-            <div id="Strat13" class="tabcontent">
-                <div class="info-box">
-                    <p>🎯 <b>選股邏輯：</b> 最新收盤價距離「近60日最高收盤價」在 -2% 以內，且成交量大於 500 張。</p>
-                    <div class="count-badge">符合：<span id="count_Strat13">{len(res13)}</span> 檔</div>
-                </div>
-                <div class="table-container">{html_tb13}</div>
-            </div>
-
+            <div id="Strat25" class="tabcontent"><div class="info-box"><p>🎯 <b>策略 25：倚強科模式複製</b> 千張大戶 &ge; 60% ＋ 5MA>20MA ＋ 出量1.5倍 ＋ 漲幅3%~25%起漲甜蜜區。</p><div class="count-badge">符合：<span id="count_Strat25">{len(res25)}</span> 檔</div></div><div class="table-container">{html_tb25}</div></div>
+            <div id="Strat24" class="tabcontent"><div class="info-box"><p>🎯 <b>策略 24：飆股基因複製篩選器</b> 鎖定近10日漲幅 5%~25% 起漲甜蜜區、近5日至少4天收紅、今日出量 &ge; 1.2倍、千張大戶持股高（或外資買超）、投信無賣壓。</p><div class="count-badge">符合：<span id="count_Strat24">{len(res24)}</span> 檔</div></div><div class="table-container">{html_tb24}</div></div>
+            <div id="Strat23" class="tabcontent"><div class="info-box"><p>🎯 <b>策略 23：突破過去10天最大量高點</b> 最新收盤價正式突破過去 10 個交易日內成交量最大那一天的當日最高價。</p><div class="count-badge">符合：<span id="count_Strat23">{len(res23)}</span> 檔</div></div><div class="table-container">{html_tb23}</div></div>
+            <div id="Strat22" class="tabcontent"><div class="info-box"><p>🎯 <b>策略 22：高勝率基因精選</b> 融合回測第 1 名「創五日高+跳空」、第 2 名「創120日高」、第 3 名「連續墊高」之精華。</p><div class="count-badge">符合：<span id="count_Strat22">{len(res22)}</span> 檔</div></div><div class="table-container">{html_tb22}</div></div>
+            <div id="Strat21" class="tabcontent"><div class="info-box"><p>🎯 <b>策略 21：30天歷史回測</b> 統計各策略在過去 30 個交易日內選出的個股，在「隔天收盤為紅盤」的歷史機率與平均漲跌幅度。</p><div class="count-badge">📊 依上漲勝率排行</div></div><div class="table-container">{html_tb21}</div></div>
+            <div id="Strat20" class="tabcontent"><div class="info-box"><p>🎯 <b>選股邏輯：</b> 1. 外資連三日買超且買超張數遞增 (越買越多) | 2. 最新一日出量 (&ge; 1.2倍) | 3. 股價收紅。</p><div class="count-badge">符合：<span id="count_Strat20">{len(res20)}</span> 檔</div></div><div class="table-container">{html_tb20}</div></div>
+            <div id="Strat19" class="tabcontent"><div class="info-box"><p>🎯 <b>選股邏輯：</b> 1. 最新一個月營收為前一個月的 1.5 倍以上 | 2. 今日第一天出量 (&ge; 1.2倍且昨未爆量)。</p><div class="count-badge">符合：<span id="count_Strat19">{len(res19)}</span> 檔</div></div><div class="table-container">{html_tb19}</div></div>
+            <div id="Strat18" class="tabcontent"><div class="info-box"><p>🎯 <b>選股邏輯：</b> 1. 連續三個月營收月增 (MoM) | 2. 今日第一天出量 (&ge; 1.2倍且昨未爆量) | 3. 股價收紅。</p><div class="count-badge">符合：<span id="count_Strat18">{len(res18)}</span> 檔</div></div><div class="table-container">{html_tb18}</div></div>
+            <div id="Strat17" class="tabcontent"><div class="info-box"><p>🎯 <b>選股邏輯：</b> 最新收盤價大於過去 120 個交易日內每一天的收盤價 (半年新高)。</p><div class="count-badge">符合：<span id="count_Strat17">{len(res17)}</span> 檔</div></div><div class="table-container">{html_tb17}</div></div>
+            <div id="Strat16" class="tabcontent"><div class="info-box"><p>🎯 <b>選股邏輯：</b> 1. 突破60日成交量最大當日高點 | 2. 第一天剛突破 | 3. 外資與投信近七天無賣出。</p><div class="count-badge">符合：<span id="count_Strat16">{len(res16)}</span> 檔</div></div><div class="table-container">{html_tb16}</div></div>
+            <div id="Strat15" class="tabcontent"><div class="info-box"><p>🎯 <b>選股邏輯：</b> 收盤價創 60 日新高，且量增 1.2 倍，底部區間壓縮突破。</p><div class="count-badge">符合：<span id="count_Strat15">{len(res15)}</span> 檔</div></div><div class="table-container">{html_tb15}</div></div>
+            <div id="Strat14" class="tabcontent"><div class="info-box"><p>🎯 <b>選股邏輯：</b> 創 20 日新高、量增，且法人（外資、投信）過去 7 天皆無賣出。</p><div class="count-badge">符合：<span id="count_Strat14">{len(res14)}</span> 檔</div></div><div class="table-container">{html_tb14}</div></div>
+            <div id="Strat13" class="tabcontent"><div class="info-box"><p>🎯 <b>選股邏輯：</b> 最新收盤價距離「近60日最高收盤價」在 -2% 以內，且成交量大於 500 張。</p><div class="count-badge">符合：<span id="count_Strat13">{len(res13)}</span> 檔</div></div><div class="table-container">{html_tb13}</div></div>
             <div id="Strat1" class="tabcontent"><div class="info-box"><p>🎯 <b>選股邏輯：</b> 向上跳空不回補、連續量增。</p><div class="count-badge">符合：<span id="count_Strat1">{len(res1)}</span> 檔</div></div><div class="table-container">{html_tb1}</div></div>
             <div id="Strat2" class="tabcontent"><div class="info-box"><p>🎯 <b>選股邏輯：</b> 階梯式墊高、外資點火、過去七天法人不賣出。</p><div class="count-badge">符合：<span id="count_Strat2">{len(res2)}</span> 檔</div></div><div class="table-container">{html_tb2}</div></div>
             <div id="Strat3" class="tabcontent"><div class="info-box"><p>🎯 <b>選股邏輯：</b> 最新日量增、投信七日不賣出、外資連續買超。</p><div class="count-badge">符合：<span id="count_Strat3">{len(res3)}</span> 檔</div></div><div class="table-container">{html_tb3}</div></div>
@@ -2118,7 +1919,7 @@ def main():
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(html_content)
 
-    print(f"\n✅ 策略 26（組合回測）與 策略 27~31（前五強即時選股）已生成！檔案: {html_filename}")
+    print(f"\n✅ 策略 26（三策略組合挖掘）與 策略 27~31（勝率前五強最新選股）已生成！檔案: {html_filename}")
     if os.environ.get("GITHUB_ACTIONS") != "true":
         webbrowser.open(f"file:///{file_path}")
 

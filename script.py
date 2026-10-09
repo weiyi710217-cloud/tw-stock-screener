@@ -604,6 +604,7 @@ def main():
 
     df_merge['5MA'] = df_merge[[f'收盤價_{j}' for j in range(5)]].mean(axis=1)
     df_merge['20MA'] = df_merge[[f'收盤價_{j}' for j in range(20)]].mean(axis=1)
+    df_merge['60MA'] = df_merge[[f'收盤價_{j}' for j in range(60)]].mean(axis=1)
     
     def get_max_vol_high(row):
         try:
@@ -660,7 +661,6 @@ def main():
     df_merge['投信近七日(張)'] = df_merge[[f'投信_{i}' for i in range(7)]].sum(axis=1)
     df_merge['外資近一月(張)'] = df_merge[[f'外資_{i}' for i in range(20)]].sum(axis=1)
 
-    # 統一在主表初始化計算所有衍生欄位，並加入預設值 "近7日符合次數"
     df_merge['近7日符合次數'] = "-"
     df_merge['最新法人買超(張)'] = (df_merge['外資_0'] + df_merge['投信_0']).round(0)
     df_merge['增量倍數'] = (df_merge['成交量_0'] / df_merge['成交量_1'].replace(0, np.nan)).round(2).fillna(0.0)
@@ -716,7 +716,6 @@ def main():
     d1_s = f"{date_1[4:6]}/{date_1[6:]}"
     d2_s = f"{date_2[4:6]}/{date_2[6:]}"
 
-    # 替換為綁定股票代碼的 ⭐ 標籤
     df_merge['⭐'] = df_merge['股票代號'].apply(lambda x: f"<span class='fav-star' data-code='{x}'>☆</span>")
 
     def calc_gap_days(row):
@@ -860,7 +859,6 @@ def main():
                 df_out[col_name] = df_out[col_name].apply(color_pct)
         return df_out
 
-    # 基礎策略函式定義
     def cond1_fn(k):
         l_k, c_prev = df_merge[f'最低價_{k}'], df_merge[f'收盤價_{k+1}']
         v_k, v_prev = df_merge[f'成交量_{k}'], df_merge[f'成交量_{k+1}']
@@ -1065,7 +1063,21 @@ def main():
         ratio = (((df_merge[f'外資_{k}'] + df_merge[f'外資_{k+1}'] + df_merge[f'外資_{k+2}'] + df_merge[f'投信_{k}'] + df_merge[f'投信_{k+1}'] + df_merge[f'投信_{k+2}']) / (df_merge[f'成交量_{k}'] + df_merge[f'成交量_{k+1}'] + df_merge[f'成交量_{k+2}']).replace(0, np.nan)) * 100).fillna(0.0)
         return whale & (ratio >= 20.0)
 
-    # 封裝單一策略資料表生成器
+    # 策略 33: 絕對鎖碼 (大戶>70% + 多頭排列 + 突破)
+    def cond33_fn(k):
+        whale_70 = df_merge['千張大戶比例(%)'] > 70.0
+        ma5_k = df_merge[[f'收盤價_{k+j}' for j in range(5)]].mean(axis=1)
+        ma20_k = df_merge[[f'收盤價_{k+j}' for j in range(20)]].mean(axis=1)
+        ma60_k = df_merge[[f'收盤價_{k+j}' for j in range(60)]].mean(axis=1)
+        c_k = df_merge[f'收盤價_{k}']
+        bullish_ma = (c_k > ma5_k) & (ma5_k > ma20_k) & (ma20_k > ma60_k)
+        
+        close_120_k = [f'收盤價_{k+j}' for j in range(1, 121) if f'收盤價_{k+j}' in df_merge.columns]
+        if not close_120_k: return pd.Series(False, index=df_merge.index)
+        max_120_k = df_merge[close_120_k].max(axis=1)
+        breakout = (c_k > max_120_k * 1.05) & (max_120_k > 0)
+        return whale_70 & bullish_ma & breakout
+
     def build_res(cond_fn, sort_cols, asc_list, rename_dict=None, extra_cols=None):
         cond = cond_fn(0)
         res = df_merge[cond].copy()
@@ -1084,7 +1096,6 @@ def main():
     std_rename = {"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"}
     inst_rename = {**std_rename, "外資_0": "外資(T)", "外資_1": "外資(T-1)", "外資_2": "外資(T-2)", "投信_0": "投信(T)", "投信_1": "投信(T-1)", "投信_2": "投信(T-2)"}
 
-    # === 生成所有個股母表給【我的最愛】頁籤 ===
     res_fav = df_merge.copy()
     res_fav = res_fav.sort_values(by="最新漲幅(%)", ascending=False)
     res_fav = res_fav.rename(columns=std_rename)
@@ -1116,6 +1127,9 @@ def main():
     res24, html_tb24 = build_res(cond24_fn, ["最新漲幅(%)", "增量倍數"], [False, False], std_rename, ["千張大戶比例(%)", "增量倍數"])
     res25, html_tb25 = build_res(cond25_fn, ["千張大戶比例(%)", "最新漲幅(%)"], [False, False], std_rename, ["千張大戶比例(%)", "增量倍數"])
     res32, html_tb32 = build_res(cond32_fn, ["法人3日集中度(%)", "最新漲幅(%)"], [False, False], inst_rename, ["千張大戶比例(%)", "最新營收月增率(%)", "法人1日集中度(%)", "法人2日集中度(%)", "法人3日集中度(%)", "外資(T)", "外資(T-1)", "外資(T-2)", "投信(T)", "投信(T-1)", "投信(T-2)"])
+    
+    # 策略 33 輸出表
+    res33, html_tb33 = build_res(cond33_fn, ["千張大戶比例(%)", "最新漲幅(%)"], [False, False], std_rename, ["千張大戶比例(%)", "最新營收月增率(%)", "120日最高收盤"])
 
     # 策略 26: 9 月三策略組合挖掘回測
     print("🔬 啟動策略 26：9 月三策略組合高勝率回測...")
@@ -1127,7 +1141,7 @@ def main():
         ("14.創20日高不賣", cond14_fn), ("15.壓縮突破60日", cond15_fn), ("16.最大量高點", cond16_fn),
         ("17.創120日高", cond17_fn), ("20.外資越買越多出量", cond20_fn),
         ("22.高勝率基因複合", cond22_fn), ("23.突破10日最大量", cond23_fn),
-        ("32.大戶鎖碼法人集中", cond32_backtest_fn)
+        ("32.大戶鎖碼法人集中", cond32_backtest_fn), ("33.絕對鎖碼突破", cond33_fn)
     ]
 
     sept_indices = [i for i, (d, _) in enumerate(days_data) if "20260901" <= d <= "20260930"]
@@ -1262,7 +1276,8 @@ def main():
         ("14.創20日高不賣", cond14_fn), ("15.壓縮突破60日", cond15_fn), ("16.最大量高點", cond16_fn),
         ("17.創120日高", cond17_fn), ("18.營收連三增啟動", cond18_fn), ("19.營收暴增1.5倍", cond19_fn),
         ("20.外資越買越多出量", cond20_fn), ("22.高勝率基因複合", cond22_fn), ("23.突破10日最大量", cond23_fn),
-        ("24.飆股基因起漲", cond24_fn), ("25.倚強科模式複製", cond25_fn), ("32.大戶鎖碼法人集中", cond32_backtest_fn)
+        ("24.飆股基因起漲", cond24_fn), ("25.倚強科模式複製", cond25_fn), ("32.大戶鎖碼法人集中", cond32_backtest_fn),
+        ("33.絕對鎖碼突破", cond33_fn)
     ]
 
     backtest_records = []
@@ -1298,7 +1313,7 @@ def main():
     df_strat21_show["隔日平均報酬(%)"] = df_strat21_show["隔日平均報酬(%)"].apply(color_pct)
     html_tb21 = df_strat21_show.to_html(index=False, classes="styled-table backtest-table sortable-table", escape=False)
 
-    # 策略 12: 綜合排行 (納入 1~11, 13~20, 22~25, 27~31, 32)
+    # 策略 12: 綜合排行
     st_lists = [
         ("1.跳空", res1), ("2.墊高", res2), ("3.量增法人", res3),
         ("4.創20日高", res4), ("5.拔蔥", res5), ("6.五日高", res6),
@@ -1310,6 +1325,7 @@ def main():
         ("20.外資越買越多出量", res20), ("22.高勝率基因複合", res22),
         ("23.突破10日最大量", res23), ("24.飆股基因起漲", res24),
         ("25.倚強科模式複製", res25), ("32.大戶鎖碼法人集中", res32),
+        ("33.絕對鎖碼突破", res33),
         ("27.組合首選", strat_results_27_31[27]["df"]),
         ("28.組合第二", strat_results_27_31[28]["df"]),
         ("29.組合第三", strat_results_27_31[29]["df"]),
@@ -1881,12 +1897,20 @@ def main():
                 <div class="module-nav-box">
                     <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇主力模式：</span>
                     <select class="custom-select" onchange="switchSubTab('Tab_Whale', this.value)">
-                        <option value="sub_strat32" selected>32. 大戶鎖碼 ＋ 法人集中度</option>
+                        <option value="sub_strat33" selected>33. 絕對鎖碼 (大戶70% + 多頭排列 + 突破波段高點5%)</option>
+                        <option value="sub_strat32">32. 大戶鎖碼 ＋ 法人集中度</option>
                         <option value="sub_strat25">25. 倚強科模式複製 (大戶&ge;60% ＋ 均線發散)</option>
                         <option value="sub_strat24">24. 飆股基因起漲 (近10日漲5%~25%起漲甜蜜區)</option>
                     </select>
                 </div>
-                <div id="sub_strat32" class="sub-tab-content" style="display:block;">
+                <div id="sub_strat33" class="sub-tab-content" style="display:block;">
+                    <div class="info-box">
+                        <p>🎯 <b>策略 33：絕對鎖碼突破</b> 千張大戶比例 &gt; 70% ＋ 5/20/60MA 均線多頭發散排列 ＋ 最新收盤價突破波段半年(120日)高點達 5% 以上。</p>
+                        <div class="count-badge">符合：<span id="count_Strat33">{len(res33)}</span> 檔</div>
+                    </div>
+                    <div class="table-container">{html_tb33}</div>
+                </div>
+                <div id="sub_strat32" class="sub-tab-content">
                     <div class="info-box">
                         <p>🎯 <b>策略 32：大戶鎖碼 ＋ 法人集中度</b> 千張大戶佔比 > 60%，且過去 1~3 天「外資+投信」合計買超佔總成交量達一定比例。</p>
                         <div class="filter-container">
@@ -2213,7 +2237,7 @@ def main():
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(html_content)
 
-    print(f"\n✅ 修正完成！「我的最愛」表格報錯已解決。檔案已生成: {html_filename}")
+    print(f"\n✅ 策略 33 絕對鎖碼 (大戶>70%+均線多頭+突破波段高) 已成功加入！檔案: {html_filename}")
     if os.environ.get("GITHUB_ACTIONS") != "true":
         webbrowser.open(f"file:///{file_path}")
 

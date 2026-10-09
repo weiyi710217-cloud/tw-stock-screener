@@ -660,6 +660,18 @@ def main():
     df_merge['投信近七日(張)'] = df_merge[[f'投信_{i}' for i in range(7)]].sum(axis=1)
     df_merge['外資近一月(張)'] = df_merge[[f'外資_{i}' for i in range(20)]].sum(axis=1)
 
+    # 統一在主表初始化計算所有可能排序或呈現的衍生欄位，杜絕 KeyError
+    df_merge['最新法人買超(張)'] = (df_merge['外資_0'] + df_merge['投信_0']).round(0)
+    df_merge['增量倍數'] = (df_merge['成交量_0'] / df_merge['成交量_1'].replace(0, np.nan)).round(2).fillna(0.0)
+    df_merge['實體K漲幅(%)'] = (((df_merge['收盤價_0'] - df_merge['開盤價_0']) / df_merge['開盤價_0'].replace(0, np.nan)) * 100).round(2).fillna(0.0)
+    df_merge['距離60日高點(%)'] = (((df_merge['收盤價_0'] - df_merge['60日最高收盤']) / df_merge['60日最高收盤'].replace(0, np.nan)) * 100).round(2).fillna(0.0)
+    df_merge['20日震幅(%)'] = (((df_merge['收盤價_0'] - df_merge['20日最低收盤']) / df_merge['20日最低收盤'].replace(0, np.nan)) * 100).round(2).fillna(0.0)
+    df_merge['40日震幅(%)'] = (((df_merge['收盤價_0'] - df_merge['40日最低收盤']) / df_merge['40日最低收盤'].replace(0, np.nan)) * 100).round(2).fillna(0.0)
+    df_merge['60日震幅(%)'] = (((df_merge['收盤價_0'] - df_merge['60日最低收盤']) / df_merge['60日最低收盤'].replace(0, np.nan)) * 100).round(2).fillna(0.0)
+    df_merge['最新日外資(張)'] = df_merge['外資_0']
+    df_merge['前1日外資(張)'] = df_merge['外資_1']
+    df_merge['前2日外資(張)'] = df_merge['外資_2']
+
     if not df_tdcc.empty:
         df_merge = pd.merge(df_merge, df_tdcc, on='股票代號', how='left')
         df_merge['千張大戶比例(%)'] = df_merge['千張大戶比例(%)'].fillna(0)
@@ -842,7 +854,7 @@ def main():
                 df_out[col_name] = df_out[col_name].apply(color_pct)
         return df_out
 
-    # 基礎策略函式定義
+    # 基礎策略條件函式
     def cond1_fn(k):
         l_k, c_prev = df_merge[f'最低價_{k}'], df_merge[f'收盤價_{k+1}']
         v_k, v_prev = df_merge[f'成交量_{k}'], df_merge[f'成交量_{k+1}']
@@ -1039,17 +1051,21 @@ def main():
         inst_safe = (df_merge[f'外資_{k}'] >= 0) | (df_merge[f'投信_{k}'] >= 0)
         return whale_locked & bullish_ma & vol_surge & launch_zone & inst_safe
 
-    # 執行個別策略 DataFrame 產出
+    # 執行個別策略 DataFrame 產出（安全防錯）
     def build_res(cond_fn, sort_cols, asc_list, rename_dict=None, extra_cols=None):
         cond = cond_fn(0)
         res = df_merge[cond].copy()
         res['近7日符合次數'] = eval_rolling_condition(cond_fn)[cond]
-        res["增量倍數"] = (res["成交量_0"] / res["成交量_1"]).round(2)
-        res = res.sort_values(by=sort_cols, ascending=asc_list)
+        # 篩選排序欄位，確保存在的欄位才進行排序
+        valid_sort_cols = [c for c in sort_cols if c in res.columns]
+        valid_asc_list = [asc_list[i] for i, c in enumerate(sort_cols) if c in res.columns]
+        if valid_sort_cols:
+            res = res.sort_values(by=valid_sort_cols, ascending=valid_asc_list)
         if rename_dict:
             res = res.rename(columns=rename_dict)
-        cols = base_cols + (extra_cols if extra_cols else ["增量倍數"]) + chip_cols
-        html = apply_color_formatting(res[cols]).to_html(index=False, classes="styled-table sortable-table", escape=False)
+        cols = base_cols + (extra_cols if extra_cols is not None else ["增量倍數"]) + chip_cols
+        valid_cols = [c for c in cols if c in res.columns]
+        html = apply_color_formatting(res[valid_cols]).to_html(index=False, classes="styled-table sortable-table", escape=False)
         return res, html
 
     std_rename = {"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"}
@@ -1177,7 +1193,7 @@ def main():
         })
 
     df_combos = pd.DataFrame(combo_records)
-    # 依使用者需求：優先以上漲率（勝率）最高排序，次排平均漲幅、中位數、樣本數
+    # 優先以上漲率（勝率）最高排序，次排平均漲幅、中位數、樣本數
     if not df_combos.empty:
         df_combos = df_combos.sort_values(
             by=["上漲率(%)", "平均漲幅(%)", "中位數漲幅(%)", "樣本數"],
@@ -1210,7 +1226,7 @@ def main():
             cond_today = f_a(0) & f_b(0) & f_c(0)
             res_df = df_merge[cond_today].copy()
             res_df['近7日符合次數'] = eval_rolling_condition(lambda k: f_a(k) & f_b(k) & f_c(k))[cond_today]
-            res_df["增量倍數"] = (res_df["成交量_0"] / res_df["成交量_1"]).round(2)
+            res_df["增量倍數"] = (res_df["成交量_0"] / res_df["成交量_1"].replace(0, np.nan)).round(2).fillna(0.0)
             res_df = res_df.sort_values(by=["最新漲幅(%)", "增量倍數"], ascending=[False, False])
             res_df = res_df.rename(columns=std_rename)
 
@@ -1331,7 +1347,7 @@ def main():
     else:
         html_tb12 = "<p style='text-align:center;'>目前無任何股票入選預設策略</p>"
 
-    # 製作可收合警告區塊
+    # 可收合警告
     warning_html = ""
     if WARNINGS:
         unique_warns = sorted(set(WARNINGS))
@@ -1568,6 +1584,7 @@ def main():
                 border-bottom: none;
             }}
 
+            /* 股票表格前兩欄固定 */
             .styled-table:not(.backtest-table) th:nth-child(1),
             .styled-table:not(.backtest-table) td:nth-child(1) {{
                 position: sticky;
@@ -1600,6 +1617,7 @@ def main():
                 background-color: #ffffff;
             }}
 
+            /* 策略 21, 26 專屬樣式：不套用 position:sticky 避免遮擋第一欄 */
             .backtest-table th, .backtest-table td {{
                 position: static !important;
                 box-shadow: none !important;
@@ -1919,7 +1937,7 @@ def main():
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(html_content)
 
-    print(f"\n✅ 策略 26（三策略組合挖掘）與 策略 27~31（勝率前五強最新選股）已生成！檔案: {html_filename}")
+    print(f"\n✅ 策略 26（三策略組合高勝率回測）與 策略 27~31（勝率前五強即時選股）已生成！檔案: {html_filename}")
     if os.environ.get("GITHUB_ACTIONS") != "true":
         webbrowser.open(f"file:///{file_path}")
 

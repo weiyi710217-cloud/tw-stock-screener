@@ -661,58 +661,41 @@ def main():
     df_merge['投信近七日(張)'] = df_merge[[f'投信_{i}' for i in range(7)]].sum(axis=1)
     df_merge['外資近一月(張)'] = df_merge[[f'外資_{i}' for i in range(20)]].sum(axis=1)
 
-    # ==========================================
-    # 【全新】計算使用者要求的「技術指標四維評分 (100分制)」
-    # ==========================================
+    # 計算技術評分
     def calculate_technical_score(row):
         score = 0
         try:
             c = float(row.get('收盤價_0', 0))
             ma20 = float(row.get('20MA', 0))
             ma60 = float(row.get('60MA', 0))
-            
-            # 1. 均線排列 (25分)
-            if c > ma20 and ma20 > ma60:
-                score += 25
-            elif c > ma20:
-                score += 12
+            if c > ma20 and ma20 > ma60: score += 25
+            elif c > ma20: score += 12
 
-            # 2. 布林通道 (25分) (以20日標準差計算)
             closes = [float(row.get(f'收盤價_{j}', 0)) for j in range(20)]
             if len(closes) == 20 and ma20 > 0:
                 std20 = np.std(closes)
                 lower_band = ma20 - 2 * std20
-                upper_band = ma20 + 2 * std20
                 if lower_band > 0:
                     dist_lower = (c - lower_band) / lower_band
-                    if dist_lower < 0.03:
-                        score += 25
-                    elif c < ma20:
-                        score += 10
+                    if dist_lower < 0.03: score += 25
+                    elif c < ma20: score += 10
 
-            # 3. KD 指標 (25分) (以9日簡易計算)
-            # 簡易 9 日 RSv -> K, D
             lows_9 = [float(row.get(f'最低價_{j}', 0)) for j in range(9)]
             highs_9 = [float(row.get(f'最高價_{j}', 0)) for j in range(9)]
             if min(lows_9) > 0 and max(highs_9) > min(lows_9):
                 rsv = (c - min(lows_9)) / (max(highs_9) - min(lows_9)) * 100
-                k_val = rsv * 0.33 + 50 * 0.67 # 簡易遞推模擬
+                k_val = rsv * 0.33 + 50 * 0.67
                 d_val = k_val * 0.33 + 50 * 0.67
-                if k_val > d_val and k_val < 80:
-                    score += 25
-                elif k_val > d_val:
-                    score += 10
+                if k_val > d_val and k_val < 80: score += 25
+                elif k_val > d_val: score += 10
 
-            # 4. MACD (25分)
             ema12 = float(row.get('5MA', c))
             ema26 = float(row.get('20MA', c))
             dif = ema12 - ema26
-            dea = dif * 0.8 # 簡易模擬
+            dea = dif * 0.8
             macd_hist = (dif - dea) * 2
-            if macd_hist > 0 and dif > dea:
-                score += 25
-            elif macd_hist > 0:
-                score += 10
+            if macd_hist > 0 and dif > dea: score += 25
+            elif macd_hist > 0: score += 10
         except Exception:
             pass
         return int(score)
@@ -897,7 +880,6 @@ def main():
 
     df_merge['標的'] = df_merge.apply(format_stock_cell, axis=1)
 
-    # 在基本欄位中加入「技術評分(分)」
     base_cols = ["⭐", "市場", "標的", "技術評分(分)", "近7日符合次數", "近5日紅盤", "近10日紅盤", "近10日漲幅(%)", f"{d1_s} 收盤", f"{d0_s} 收盤", "最新漲幅(%)", "前一日漲幅(%)", f"{d0_s} 量(張)"]
     chip_cols = ["外資近七日(張)", "投信近七日(張)", "外資近一月(張)", "外資近月買超佔持股(%)", "千張大戶比例(%)"]
 
@@ -2005,18 +1987,18 @@ def main():
             <div id="Tab_Revenue" class="tabcontent">
                 <div class="module-nav-box">
                     <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇營收成長條件：</span>
-                    <select class="custom-select" onchange="switchSubTab('Tab_Revenue', this.value)">
-                        <option value="sub_strat18" selected>18. 連續 3 個月營收月增 (MoM) ＋ 出量收紅</option>
-                        <option value="sub_strat19">19. 最新月營收暴增 1.5 倍以上 ＋ 首日出量</option>
+                    <select class="custom-select" id="sel_Rev_Mode" onchange="filterRevenueMode()">
+                        <option value="18" selected>18. 連續 3 個月營收月增 (MoM)</option>
+                        <option value="19">19. 最新月營收暴增 1.5 倍以上</option>
+                    </select>
+                    <select class="custom-select" id="sel_Rev_Vol" onchange="filterRevenueMode()">
+                        <option value="yes" selected>今日有出量 (&ge; 1.2倍)</option>
+                        <option value="no">不限成交量</option>
                     </select>
                 </div>
-                <div id="sub_strat18" class="sub-tab-content" style="display:block;">
-                    <div class="info-box"><p>🎯 連續三個月營收月增 (MoM) | 今日第一天出量 (&ge; 1.2倍且昨未爆量) | 股價收紅。</p><div class="count-badge">符合：{len(res18)} 檔</div></div>
-                    <div class="table-container">{html_tb18}</div>
-                </div>
-                <div id="sub_strat19" class="sub-tab-content">
-                    <div class="info-box"><p>🎯 最新月營收為前月 1.5 倍以上 (月增率 &ge; 50%) | 今日第一天出量 (&ge; 1.2倍且昨未爆量)。</p><div class="count-badge">符合：{len(res19)} 檔</div></div>
-                    <div class="table-container">{html_tb19}</div>
+                <div id="sub_strat_rev" class="sub-tab-content" style="display:block;">
+                    <div class="info-box"><p>🎯 篩選基本面營收強勢突破標的，可透過上方選單即時切換「營收成長條件」與「是否要求出量」。</p><div class="count-badge">符合：<span id="count_Revenue">0</span> 檔</div></div>
+                    <div class="table-container" id="container_rev_table">{html_tb18}</div>
                 </div>
             </div>
 
@@ -2171,6 +2153,7 @@ def main():
                 document.getElementById(strategyName).style.display = "block";
                 evt.currentTarget.classList.add("active");
                 evt.currentTarget.scrollIntoView({{ behavior: 'smooth', inline: 'center', block: 'nearest' }});
+                if(strategyName === 'Tab_Revenue') filterRevenueMode();
             }}
 
             function switchSubTab(parentTabId, subTargetId) {{
@@ -2212,6 +2195,43 @@ def main():
                     if(show) count++;
                 }});
                 updateVisibleCount('Strat32', count);
+            }}
+
+            function filterRevenueMode() {{
+                let mode = document.getElementById('sel_Rev_Mode').value;
+                let volOpt = document.getElementById('sel_Rev_Vol').value;
+                
+                let container = document.getElementById('container_rev_table');
+                let countBadge = document.getElementById('count_Revenue');
+                
+                let tbl18 = `{html_tb18}`;
+                let tbl19 = `{html_tb19}`;
+                
+                let targetHtml = (mode === '18') ? tbl18 : tbl19;
+                container.innerHTML = targetHtml;
+                
+                let table = container.querySelector("table");
+                if(!table) {{
+                    countBadge.innerText = "0";
+                    return;
+                }}
+                
+                let headers = table.querySelectorAll("thead th");
+                let idxVol = -1;
+                headers.forEach((th, i) => {{ if (th.innerText.includes("增量倍數")) idxVol = i; }});
+
+                let count = 0;
+                table.querySelectorAll("tbody tr").forEach(row => {{
+                    let show = true;
+                    if (volOpt === 'yes' && idxVol >= 0) {{
+                        let cells = row.querySelectorAll("td");
+                        let vMul = parseFloat(cells[idxVol].innerText);
+                        if (isNaN(vMul) || vMul < 1.2) show = false;
+                    }}
+                    row.style.display = show ? "" : "none";
+                    if(show) count++;
+                }});
+                countBadge.innerText = count;
             }}
 
             function sortTbody(tbody, colIndex = -1, isAscending = false) {{
@@ -2285,6 +2305,7 @@ def main():
                 enableTableSorting();
                 setTimeout(() => {{
                     filterStrat32();
+                    filterRevenueMode();
                 }}, 300);
             }});
         </script>
@@ -2303,7 +2324,7 @@ def main():
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(html_content)
 
-    print(f"\n✅ 策略 33 已成功放寬至「距半年高點 -5% ~ +5% 蓄勢待發區」！檔案已生成: {html_filename}")
+    print(f"\n✅ 策略 18 營收量增選項與技術計分模組已整合完畢！檔案已生成: {html_filename}")
     if os.environ.get("GITHUB_ACTIONS") != "true":
         webbrowser.open(f"file:///{file_path}")
 

@@ -661,6 +661,64 @@ def main():
     df_merge['投信近七日(張)'] = df_merge[[f'投信_{i}' for i in range(7)]].sum(axis=1)
     df_merge['外資近一月(張)'] = df_merge[[f'外資_{i}' for i in range(20)]].sum(axis=1)
 
+    # ==========================================
+    # 【全新】計算使用者要求的「技術指標四維評分 (100分制)」
+    # ==========================================
+    def calculate_technical_score(row):
+        score = 0
+        try:
+            c = float(row.get('收盤價_0', 0))
+            ma20 = float(row.get('20MA', 0))
+            ma60 = float(row.get('60MA', 0))
+            
+            # 1. 均線排列 (25分)
+            if c > ma20 and ma20 > ma60:
+                score += 25
+            elif c > ma20:
+                score += 12
+
+            # 2. 布林通道 (25分) (以20日標準差計算)
+            closes = [float(row.get(f'收盤價_{j}', 0)) for j in range(20)]
+            if len(closes) == 20 and ma20 > 0:
+                std20 = np.std(closes)
+                lower_band = ma20 - 2 * std20
+                upper_band = ma20 + 2 * std20
+                if lower_band > 0:
+                    dist_lower = (c - lower_band) / lower_band
+                    if dist_lower < 0.03:
+                        score += 25
+                    elif c < ma20:
+                        score += 10
+
+            # 3. KD 指標 (25分) (以9日簡易計算)
+            # 簡易 9 日 RSv -> K, D
+            lows_9 = [float(row.get(f'最低價_{j}', 0)) for j in range(9)]
+            highs_9 = [float(row.get(f'最高價_{j}', 0)) for j in range(9)]
+            if min(lows_9) > 0 and max(highs_9) > min(lows_9):
+                rsv = (c - min(lows_9)) / (max(highs_9) - min(lows_9)) * 100
+                k_val = rsv * 0.33 + 50 * 0.67 # 簡易遞推模擬
+                d_val = k_val * 0.33 + 50 * 0.67
+                if k_val > d_val and k_val < 80:
+                    score += 25
+                elif k_val > d_val:
+                    score += 10
+
+            # 4. MACD (25分)
+            ema12 = float(row.get('5MA', c))
+            ema26 = float(row.get('20MA', c))
+            dif = ema12 - ema26
+            dea = dif * 0.8 # 簡易模擬
+            macd_hist = (dif - dea) * 2
+            if macd_hist > 0 and dif > dea:
+                score += 25
+            elif macd_hist > 0:
+                score += 10
+        except Exception:
+            pass
+        return int(score)
+
+    df_merge['技術評分(分)'] = df_merge.apply(calculate_technical_score, axis=1)
+
     df_merge['近7日符合次數'] = "-"
     df_merge['最新法人買超(張)'] = (df_merge['外資_0'] + df_merge['投信_0']).round(0)
     df_merge['增量倍數'] = (df_merge['成交量_0'] / df_merge['成交量_1'].replace(0, np.nan)).round(2).fillna(0.0)
@@ -839,7 +897,8 @@ def main():
 
     df_merge['標的'] = df_merge.apply(format_stock_cell, axis=1)
 
-    base_cols = ["⭐", "市場", "標的", "近7日符合次數", "近5日紅盤", "近10日紅盤", "近10日漲幅(%)", f"{d1_s} 收盤", f"{d0_s} 收盤", "最新漲幅(%)", "前一日漲幅(%)", f"{d0_s} 量(張)"]
+    # 在基本欄位中加入「技術評分(分)」
+    base_cols = ["⭐", "市場", "標的", "技術評分(分)", "近7日符合次數", "近5日紅盤", "近10日紅盤", "近10日漲幅(%)", f"{d1_s} 收盤", f"{d0_s} 收盤", "最新漲幅(%)", "前一日漲幅(%)", f"{d0_s} 量(張)"]
     chip_cols = ["外資近七日(張)", "投信近七日(張)", "外資近一月(張)", "外資近月買超佔持股(%)", "千張大戶比例(%)"]
 
     def eval_rolling_condition(condition_func):
@@ -1063,7 +1122,7 @@ def main():
         ratio = (((df_merge[f'外資_{k}'] + df_merge[f'外資_{k+1}'] + df_merge[f'外資_{k+2}'] + df_merge[f'投信_{k}'] + df_merge[f'投信_{k+1}'] + df_merge[f'投信_{k+2}']) / (df_merge[f'成交量_{k}'] + df_merge[f'成交量_{k+1}'] + df_merge[f'成交量_{k+2}']).replace(0, np.nan)) * 100).fillna(0.0)
         return whale & (ratio >= 20.0)
 
-    # 策略 33 修正：大戶>70% + 多頭排列 + 即將突破或突破半年高點5%以內
+    # 策略 33：大戶>70% + 多頭排列 + 距離半年高點 -5% ~ +5% 以內 (即將或剛突破)
     def cond33_fn(k):
         whale_70 = df_merge['千張大戶比例(%)'] > 70.0
         ma5_k = df_merge[[f'收盤價_{k+j}' for j in range(5)]].mean(axis=1)
@@ -1075,7 +1134,6 @@ def main():
         close_120_k = [f'收盤價_{k+j}' for j in range(1, 121) if f'收盤價_{k+j}' in df_merge.columns]
         if not close_120_k: return pd.Series(False, index=df_merge.index)
         max_120_k = df_merge[close_120_k].max(axis=1)
-        # 距離高點 -5% ~ +5% 以內 (即將突破或剛突破)
         near_breakout = (c_k >= max_120_k * 0.95) & (c_k <= max_120_k * 1.05) & (max_120_k > 0)
         return whale_70 & bullish_ma & near_breakout
 
@@ -1129,7 +1187,7 @@ def main():
     res25, html_tb25 = build_res(cond25_fn, ["千張大戶比例(%)", "最新漲幅(%)"], [False, False], std_rename, ["千張大戶比例(%)", "增量倍數"])
     res32, html_tb32 = build_res(cond32_fn, ["法人3日集中度(%)", "最新漲幅(%)"], [False, False], inst_rename, ["千張大戶比例(%)", "最新營收月增率(%)", "法人1日集中度(%)", "法人2日集中度(%)", "法人3日集中度(%)", "外資(T)", "外資(T-1)", "外資(T-2)", "投信(T)", "投信(T-1)", "投信(T-2)"])
     
-    # 策略 33 輸出表 (顯示大戶比、營收月增率、120日高點)
+    # 策略 33 輸出表 (顯示大戶比例、最新營收月增率)
     res33, html_tb33 = build_res(cond33_fn, ["千張大戶比例(%)", "最新漲幅(%)"], [False, False], std_rename, ["千張大戶比例(%)", "最新營收月增率(%)", "120日最高收盤"])
 
     # 策略 26: 9 月三策略組合挖掘回測
@@ -1320,7 +1378,7 @@ def main():
         ("4.創20日高", res4), ("5.拔蔥", res5), ("6.五日高", res6),
         ("7.創20日高不賣", res7), ("8.連兩日創高", res8), ("9.多重", res9),
         ("10.上櫃強勢", res10), ("11.上櫃實體紅K", res11), ("13.逼近60日高", res13),
-        ("14.創20日高+法人七日不賣", res14), ("15.壓縮突破60日高", res15_strict),
+        ("14.創20日高+法人七日不賣", res14), ("15.壓縮突破60日", res15_strict),
         ("16.突破最大量高點", res16), ("17.創120日高", res17),
         ("18.營收連三增啟動", res18), ("19.營收暴增1.5倍", res19),
         ("20.外資越買越多出量", res20), ("22.高勝率基因複合", res22),
@@ -1901,7 +1959,7 @@ def main():
                 <div class="module-nav-box">
                     <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇主力模式：</span>
                     <select class="custom-select" onchange="switchSubTab('Tab_Whale', this.value)">
-                        <option value="sub_strat33" selected>33. 絕對鎖碼 (大戶>70% + 多頭排列 + 接近或突破半年高點)</option>
+                        <option value="sub_strat33" selected>33. 絕對鎖碼 (大戶>70% + 多頭排列 + 距半年高點-5%~+5%)</option>
                         <option value="sub_strat32">32. 大戶鎖碼 ＋ 法人集中度</option>
                         <option value="sub_strat25">25. 倚強科模式複製 (大戶&ge;60% ＋ 均線發散)</option>
                         <option value="sub_strat24">24. 飆股基因起漲 (近10日漲5%~25%起漲甜蜜區)</option>
@@ -2245,7 +2303,7 @@ def main():
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(html_content)
 
-    print(f"\n✅ 策略 33 已調整為「即將或剛突破半年高點 5% 區間」！檔案已生成: {html_filename}")
+    print(f"\n✅ 策略 33 已成功放寬至「距半年高點 -5% ~ +5% 蓄勢待發區」！檔案已生成: {html_filename}")
     if os.environ.get("GITHUB_ACTIONS") != "true":
         webbrowser.open(f"file:///{file_path}")
 

@@ -4,6 +4,7 @@ import random
 import os
 import webbrowser
 import itertools
+from io import StringIO
 import numpy as np
 import pandas as pd
 import requests
@@ -406,33 +407,36 @@ def fetch_month_revenue(year_roc: int, month: int) -> pd.DataFrame:
     if not df_cached.empty:
         return df_cached
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-    dfs = []
-    for skey in [0, 1]:
-        url = f"https://mops.twse.com.tw/nas/t21/skey{skey}/t21sc03_{year_roc}_{month}_0.html"
+    col_name = f"營收_{year_roc}_{month:02d}"
+    rows = {}
+    # MOPS 月營收靜態頁：sii = 上市、otc = 上櫃
+    for market in ["sii", "otc"]:
+        url = f"https://mops.twse.com.tw/nas/t21/{market}/t21sc03_{year_roc}_{month}_0.html"
         try:
-            resp = requests.get(url, headers=headers, timeout=5)
-            if resp.status_code == 200:
-                resp.encoding = 'big5'
-                tables = pd.read_html(resp.text)
-                for t in tables:
-                    if t.shape[1] >= 11 and "公司代號" in str(t.values):
-                        for r_idx in range(len(t)):
-                            row_vals = [str(x).strip() for x in t.iloc[r_idx].values]
-                            code = row_vals[0]
-                            if code.isdigit() and len(code) == 4:
-                                rev = to_float(row_vals[2])
-                                dfs.append({"股票代號": code, f"營收_{year_roc}_{month:02d}": rev})
-        except Exception:
-            pass
+            resp = requests.get(url, headers=OPENAPI_HEADERS, timeout=10)
+            if resp.status_code != 200:
+                print(f"⚠ 營收 {year_roc}/{month:02d} {market} HTTP {resp.status_code}")
+                continue
+            html = resp.content.decode("big5", errors="ignore")
+            tables = pd.read_html(StringIO(html))
+        except Exception as e:
+            print(f"⚠ 營收 {year_roc}/{month:02d} {market} 失敗: {e}")
+            continue
+        for t in tables:
+            if t.shape[1] < 11:
+                continue
+            for r in t.itertuples(index=False):
+                code = str(r[0]).strip()
+                if code.isdigit() and len(code) == 4:
+                    rows[code] = to_float(r[2])
 
-    if dfs:
-        df_res = pd.DataFrame(dfs).drop_duplicates(subset=["股票代號"])
+    if rows:
+        df_res = pd.DataFrame({"股票代號": list(rows.keys()), col_name: list(rows.values())})
         df_res.to_csv(cache_file, index=False, encoding="utf-8-sig")
         return df_res
-    return pd.DataFrame(columns=["股票代號", f"營收_{year_roc}_{month:02d}"])
+
+    WARNINGS.append(f"月營收({year_roc}/{month:02d}) 抓取失敗")
+    return pd.DataFrame(columns=["股票代號", col_name])
 
 def get_revenue_analysis() -> pd.DataFrame:
     today = datetime.date.today()
@@ -461,6 +465,10 @@ def get_revenue_analysis() -> pd.DataFrame:
         else:
             if not df_m.empty:
                 df_merged = pd.merge(df_merged, df_m, on="股票代號", how="outer")
+
+    if df_merged is not None:
+        print(f"📊 營收資料筆數: {df_merged.shape}")
+        print(df_merged.notna().sum().to_string())
 
     if df_merged is None or len(rev_cols) < 3:
         return pd.DataFrame(columns=["股票代號", "營收連3月月增", "營收連2月月增", "最新營收月增率(%)", "營收爆發1.5倍"])
@@ -749,10 +757,10 @@ def main():
 
     if not df_revenue.empty:
         df_merge = pd.merge(df_merge, df_revenue, on='股票代號', how='left')
-        df_merge['營收連3月月增'] = df_merge['營收連3月月增'].fillna(False)
-        df_merge['營收連2月月增'] = df_merge['營收連2月月增'].fillna(False)
+        df_merge['營收連3月月增'] = df_merge['營收連3月月增'].fillna(False).astype(bool)
+        df_merge['營收連2月月增'] = df_merge['營收連2月月增'].fillna(False).astype(bool)
         df_merge['最新營收月增率(%)'] = df_merge['最新營收月增率(%)'].fillna(0.0)
-        df_merge['營收爆發1.5倍'] = df_merge['營收爆發1.5倍'].fillna(False)
+        df_merge['營收爆發1.5倍'] = df_merge['營收爆發1.5倍'].fillna(False).astype(bool)
     else:
         df_merge['營收連3月月增'] = False
         df_merge['營收連2月月增'] = False
@@ -1988,7 +1996,7 @@ def main():
                 </div>
             </div>
 
-            <!-- 7. 營收動能 (完美修正：直接以子區塊完整渲染，確保選單切換不為 0 檔) -->
+            <!-- 7. 營收動能 -->
             <div id="Tab_Revenue" class="tabcontent">
                 <div class="module-nav-box">
                     <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇營收成長條件：</span>

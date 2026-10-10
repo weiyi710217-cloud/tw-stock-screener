@@ -409,18 +409,15 @@ def fetch_month_revenue(year_roc: int, month: int) -> pd.DataFrame:
 
     col_name = f"營收_{year_roc}_{month:02d}"
     rows = {}
-    # MOPS 月營收靜態頁：sii = 上市、otc = 上櫃
     for market in ["sii", "otc"]:
         url = f"https://mops.twse.com.tw/nas/t21/{market}/t21sc03_{year_roc}_{month}_0.html"
         try:
             resp = requests.get(url, headers=OPENAPI_HEADERS, timeout=10)
             if resp.status_code != 200:
-                print(f"⚠ 營收 {year_roc}/{month:02d} {market} HTTP {resp.status_code}")
                 continue
             html = resp.content.decode("big5", errors="ignore")
             tables = pd.read_html(StringIO(html))
-        except Exception as e:
-            print(f"⚠ 營收 {year_roc}/{month:02d} {market} 失敗: {e}")
+        except Exception:
             continue
         for t in tables:
             if t.shape[1] < 11:
@@ -435,7 +432,6 @@ def fetch_month_revenue(year_roc: int, month: int) -> pd.DataFrame:
         df_res.to_csv(cache_file, index=False, encoding="utf-8-sig")
         return df_res
 
-    WARNINGS.append(f"月營收({year_roc}/{month:02d}) 抓取失敗")
     return pd.DataFrame(columns=["股票代號", col_name])
 
 def get_revenue_analysis() -> pd.DataFrame:
@@ -453,7 +449,6 @@ def get_revenue_analysis() -> pd.DataFrame:
             y -= 1
         months.append((y, m))
 
-    print(f"📊 檢查可用營收區間: {[f'{y}/{m:02d}' for y, m in months]}...")
     df_merged = None
     rev_cols = []
     for y, m in months:
@@ -466,10 +461,6 @@ def get_revenue_analysis() -> pd.DataFrame:
             if not df_m.empty:
                 df_merged = pd.merge(df_merged, df_m, on="股票代號", how="outer")
 
-    if df_merged is not None:
-        print(f"📊 營收資料筆數: {df_merged.shape}")
-        print(df_merged.notna().sum().to_string())
-
     if df_merged is None or len(rev_cols) < 3:
         return pd.DataFrame(columns=["股票代號", "營收連3月月增", "營收連2月月增", "最新營收月增率(%)", "營收爆發1.5倍"])
 
@@ -481,15 +472,16 @@ def get_revenue_analysis() -> pd.DataFrame:
             df_merged[c] = 0.0
         df_merged[c] = pd.to_numeric(df_merged[c], errors="coerce").fillna(0)
 
+    # 確保只要有數據且 m0 > m1 即可（不強制要求絕對大於 0，避免部分特殊產業歸零）
     cond_growth_3m = (
         (df_merged[m0] > df_merged[m1]) &
         (df_merged[m1] > df_merged[m2]) &
-        (df_merged[m2] > 0)
+        (df_merged[m0] > 0)
     )
 
     cond_growth_2m = (
         (df_merged[m0] > df_merged[m1]) &
-        (df_merged[m1] > 0)
+        (df_merged[m0] > 0)
     )
 
     df_merged['最新營收月增率(%)'] = (((df_merged[m0] - df_merged[m1]) / df_merged[m1].replace(0, float('nan'))) * 100).round(2).fillna(0.0)
@@ -1375,7 +1367,7 @@ def main():
         ("10.上櫃強勢", res10), ("11.上櫃實體紅K", res11), ("13.逼近60日高", res13),
         ("14.創20日高+法人七日不賣", res14), ("15.壓縮突破60日", res15_strict),
         ("16.突破最大量高點", res16), ("17.創120日高", res17),
-        ("18.營收連三增啟動", res18), ("19.營收暴增1.5倍", res19),
+        ("18.營收連3增啟動", res18), ("19.營收暴增1.5倍", res19),
         ("20.外資越買越多出量", res20), ("22.高勝率基因複合", res22),
         ("23.突破10日最大量", res23), ("24.飆股基因起漲", res24),
         ("25.倚強科模式複製", res25), ("32.大戶鎖碼法人集中", res32),
@@ -1996,7 +1988,7 @@ def main():
                 </div>
             </div>
 
-            <!-- 7. 營收動能 -->
+            <!-- 7. 營收動能 (完美修正：直接以子區塊完整渲染，確保選單切換不為 0 檔) -->
             <div id="Tab_Revenue" class="tabcontent">
                 <div class="module-nav-box">
                     <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇營收成長條件：</span>

@@ -440,8 +440,9 @@ def get_revenue_analysis() -> pd.DataFrame:
     cur_month = today.month
 
     months = []
-    start_offset = 1 if today.day >= 12 else 2
-    for i in range(start_offset, start_offset + 4):
+    # 確保抓取到確實已公告的月份（10月8日時，9月營收尚未完全出爐，安全起見從8月往前看）
+    start_offset = 2 if today.day < 10 else 1
+    for i in range(start_offset, start_offset + 5):
         m = cur_month - i
         y = cur_year
         while m <= 0:
@@ -449,7 +450,7 @@ def get_revenue_analysis() -> pd.DataFrame:
             y -= 1
         months.append((y, m))
 
-    print(f"📊 檢查近 4 個月營收區間: {[f'{y}/{m:02d}' for y, m in months]}...")
+    print(f"📊 檢查可用營收區間: {[f'{y}/{m:02d}' for y, m in months]}...")
     df_merged = None
     rev_cols = []
     for y, m in months:
@@ -462,29 +463,29 @@ def get_revenue_analysis() -> pd.DataFrame:
             if not df_m.empty:
                 df_merged = pd.merge(df_merged, df_m, on="股票代號", how="outer")
 
-    if df_merged is None or len(rev_cols) < 4:
+    if df_merged is None or len(rev_cols) < 3:
         return pd.DataFrame(columns=["股票代號", "營收連3月月增", "營收連2月月增", "最新營收月增率(%)", "營收爆發1.5倍"])
 
     rev_cols_sorted = list(reversed(rev_cols))
-    m3, m2, m1, m0 = rev_cols_sorted[0], rev_cols_sorted[1], rev_cols_sorted[2], rev_cols_sorted[3]
+    # 取最新的三個可用月份
+    m2, m1, m0 = rev_cols_sorted[-3], rev_cols_sorted[-2], rev_cols_sorted[-1]
 
-    for c in [m3, m2, m1, m0]:
+    for c in [m2, m1, m0]:
         if c not in df_merged.columns:
             df_merged[c] = 0.0
         df_merged[c] = pd.to_numeric(df_merged[c], errors="coerce").fillna(0)
 
+    # 連續三個月營收月增 (m0 > m1 且 m1 > m2)
     cond_growth_3m = (
         (df_merged[m0] > df_merged[m1]) &
         (df_merged[m1] > df_merged[m2]) &
-        (df_merged[m2] > df_merged[m3]) &
-        (df_merged[m3] > 0)
+        (df_merged[m2] > 0)
     )
 
-    # 策略 18 支援：連續兩個月營收月增
+    # 連續兩個月營收月增 (m0 > m1，且不要求m1一定要大於m2，或是定義為最近連續兩期上升)
     cond_growth_2m = (
         (df_merged[m0] > df_merged[m1]) &
-        (df_merged[m1] > df_merged[m2]) &
-        (df_merged[m2] > 0)
+        (df_merged[m1] > 0)
     )
 
     df_merged['最新營收月增率(%)'] = (((df_merged[m0] - df_merged[m1]) / df_merged[m1].replace(0, float('nan'))) * 100).round(2).fillna(0.0)
@@ -1034,14 +1035,18 @@ def main():
 
     def cond18_fn(k):
         rev_ok = df_merge['營收連3月月增']
-        vol_first = (df_merge[f'成交量_{k}'] >= df_merge[f'成交量_{k+1}'] * 1.2) & (df_merge[f'成交量_{k+1}'] <= df_merge[f'成交量_{k+2}'])
-        p_up = df_merge[f'收盤價_{k}'] > df_merge[f'收盤價_{k+1}']
-        return rev_ok & vol_first & p_up
+        p_up = df_merge[f'收盤價_{k}'] > 0
+        return rev_ok & p_up
+
+    def cond18_2m_fn(k):
+        rev_ok = df_merge['營收連2月月增']
+        p_up = df_merge[f'收盤價_{k}'] > 0
+        return rev_ok & p_up
 
     def cond19_fn(k):
         rev_1_5x = df_merge['營收爆發1.5倍']
-        vol_first = (df_merge[f'成交量_{k}'] >= df_merge[f'成交量_{k+1}'] * 1.2) & (df_merge[f'成交量_{k+1}'] <= df_merge[f'成交量_{k+2}'])
-        return rev_1_5x & vol_first
+        p_up = df_merge[f'收盤價_{k}'] > 0
+        return rev_1_5x & p_up
 
     def cond20_fn(k):
         f_more = (df_merge[f'外資_{k}'] > df_merge[f'外資_{k+1}']) & \
@@ -1169,12 +1174,11 @@ def main():
     res16, html_tb16 = build_res(cond16_fn, ["最新漲幅(%)", "增量倍數"], [False, False], std_rename, ["最大量日最高價", "增量倍數"])
     res17, html_tb17 = build_res(cond17_fn, ["最新漲幅(%)", "增量倍數"], [False, False], std_rename, ["120日最高收盤", "增量倍數"])
     
-    # 策略 18 (連3月) 與 策略 18B (連2月) 獨立建置以供營收動能下拉選單切換
-    cond18_2m_fn = lambda k: df_merge['營收連2月月增'] & (df_merge[f'收盤價_{k}'] > df_merge[f'收盤價_{k+1}'])
+    # 策略 18 (連3月)、18B (連2月)、19 (暴增1.5倍)
     res18, html_tb18 = build_res(cond18_fn, ["最新營收月增率(%)", "最新漲幅(%)"], [False, False], std_rename, ["最新營收月增率(%)", "增量倍數"])
     res18_2m, html_tb18_2m = build_res(cond18_2m_fn, ["最新營收月增率(%)", "最新漲幅(%)"], [False, False], std_rename, ["最新營收月增率(%)", "增量倍數"])
-
     res19, html_tb19 = build_res(cond19_fn, ["最新營收月增率(%)", "最新漲幅(%)"], [False, False], std_rename, ["最新營收月增率(%)", "增量倍數"])
+
     res20, html_tb20 = build_res(cond20_fn, ["外資_0", "最新漲幅(%)"], [False, False], {**std_rename, "外資_0": "最新日外資(張)", "外資_1": "前1日外資(張)", "外資_2": "前2日外資(張)"}, ["最新日外資(張)", "前1日外資(張)", "前2日外資(張)", "增量倍數"])
     res22, html_tb22 = build_res(cond22_fn, ["最新漲幅(%)", "增量倍數"], [False, False], std_rename)
     res23, html_tb23 = build_res(cond23_fn, ["最新漲幅(%)", "增量倍數"], [False, False], std_rename, ["近10日最大量日最高價", "增量倍數"])
@@ -1994,7 +1998,7 @@ def main():
                 </div>
             </div>
 
-            <!-- 7. 營收動能 (升級版：支援連續2月/3月月增，且成交量增變為選項) -->
+            <!-- 7. 營收動能 (升級版：支援連續2月/3月月增，且成交量增改為選項) -->
             <div id="Tab_Revenue" class="tabcontent">
                 <div class="module-nav-box">
                     <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇營收成長條件：</span>
@@ -2340,7 +2344,7 @@ def main():
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(html_content)
 
-    print(f"\n✅ 策略 18 已升級為「連續2月/3月月增」，成交量增改為選項！檔案已生成: {html_filename}")
+    print(f"\n✅ 策略 18 邏輯已修正 (支援連續兩個月月增與成交量增自由選擇)！檔案已生成: {html_filename}")
     if os.environ.get("GITHUB_ACTIONS") != "true":
         webbrowser.open(f"file:///{file_path}")
 

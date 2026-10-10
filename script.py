@@ -440,7 +440,6 @@ def get_revenue_analysis() -> pd.DataFrame:
     cur_month = today.month
 
     months = []
-    # 確保抓取到確實已公告的月份（10月8日時，9月營收尚未完全出爐，安全起見從8月往前看）
     start_offset = 2 if today.day < 10 else 1
     for i in range(start_offset, start_offset + 5):
         m = cur_month - i
@@ -467,7 +466,6 @@ def get_revenue_analysis() -> pd.DataFrame:
         return pd.DataFrame(columns=["股票代號", "營收連3月月增", "營收連2月月增", "最新營收月增率(%)", "營收爆發1.5倍"])
 
     rev_cols_sorted = list(reversed(rev_cols))
-    # 取最新的三個可用月份
     m2, m1, m0 = rev_cols_sorted[-3], rev_cols_sorted[-2], rev_cols_sorted[-1]
 
     for c in [m2, m1, m0]:
@@ -475,14 +473,12 @@ def get_revenue_analysis() -> pd.DataFrame:
             df_merged[c] = 0.0
         df_merged[c] = pd.to_numeric(df_merged[c], errors="coerce").fillna(0)
 
-    # 連續三個月營收月增 (m0 > m1 且 m1 > m2)
     cond_growth_3m = (
         (df_merged[m0] > df_merged[m1]) &
         (df_merged[m1] > df_merged[m2]) &
         (df_merged[m2] > 0)
     )
 
-    # 連續兩個月營收月增 (m0 > m1，且不要求m1一定要大於m2，或是定義為最近連續兩期上升)
     cond_growth_2m = (
         (df_merged[m0] > df_merged[m1]) &
         (df_merged[m1] > 0)
@@ -1034,19 +1030,13 @@ def main():
         return (df_merge[f'收盤價_{k}'] > 0) & (max_120 > 0) & (df_merge[f'收盤價_{k}'] > max_120)
 
     def cond18_fn(k):
-        rev_ok = df_merge['營收連3月月增']
-        p_up = df_merge[f'收盤價_{k}'] > 0
-        return rev_ok & p_up
+        return df_merge['營收連3月月增'] & (df_merge[f'收盤價_{k}'] > 0)
 
     def cond18_2m_fn(k):
-        rev_ok = df_merge['營收連2月月增']
-        p_up = df_merge[f'收盤價_{k}'] > 0
-        return rev_ok & p_up
+        return df_merge['營收連2月月增'] & (df_merge[f'收盤價_{k}'] > 0)
 
     def cond19_fn(k):
-        rev_1_5x = df_merge['營收爆發1.5倍']
-        p_up = df_merge[f'收盤價_{k}'] > 0
-        return rev_1_5x & p_up
+        return df_merge['營收爆發1.5倍'] & (df_merge[f'收盤價_{k}'] > 0)
 
     def cond20_fn(k):
         f_more = (df_merge[f'外資_{k}'] > df_merge[f'外資_{k+1}']) & \
@@ -1820,7 +1810,7 @@ def main():
                 <div class="table-container">{html_tb12}</div>
             </div>
 
-            <!-- 2. 最佳回測組合 (策略 27~31 合併) -->
+            <!-- 2. 最佳回測組合 -->
             <div id="Tab_TopCombos" class="tabcontent">
                 <div class="module-nav-box">
                     <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇回測最佳組合：</span>
@@ -1998,23 +1988,28 @@ def main():
                 </div>
             </div>
 
-            <!-- 7. 營收動能 (升級版：支援連續2月/3月月增，且成交量增改為選項) -->
+            <!-- 7. 營收動能 (完美修正：直接以子區塊完整渲染，確保選單切換不為 0 檔) -->
             <div id="Tab_Revenue" class="tabcontent">
                 <div class="module-nav-box">
                     <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇營收成長條件：</span>
-                    <select class="custom-select" id="sel_Rev_Period" onchange="filterRevenueMode()">
-                        <option value="2m" selected>18. 連續 2 個月營收月增 (MoM)</option>
-                        <option value="3m">18B. 連續 3 個月營收月增 (MoM)</option>
-                        <option value="1.5x">19. 最新月營收暴增 1.5 倍以上</option>
-                    </select>
-                    <select class="custom-select" id="sel_Rev_Vol" onchange="filterRevenueMode()">
-                        <option value="no" selected>不限量能 (預設)</option>
-                        <option value="yes">今日有出量 (&ge; 1.2倍)</option>
+                    <select class="custom-select" id="sel_Rev_Mode" onchange="switchRevenueSubTab(this.value)">
+                        <option value="rev_2m" selected>18. 連續 2 個月營收月增 (MoM)</option>
+                        <option value="rev_3m">18B. 連續 3 個月營收月增 (MoM)</option>
+                        <option value="rev_15x">19. 最新月營收暴增 1.5 倍以上</option>
                     </select>
                 </div>
-                <div id="sub_strat_rev" class="sub-tab-content" style="display:block;">
-                    <div class="info-box"><p>🎯 篩選基本面營收強勢突破標的，可透過上方選單即時切換「營收連續月增期數」與「成交量增條件」。</p><div class="count-badge">符合：<span id="count_Revenue">0</span> 檔</div></div>
-                    <div class="table-container" id="container_rev_table">{html_tb18_2m}</div>
+                
+                <div id="rev_2m" class="rev-sub-content" style="display:block;">
+                    <div class="info-box"><p>🎯 連續兩個月營收月增 (MoM) 強勢成長標的。</p><div class="count-badge">符合：{len(res18_2m)} 檔</div></div>
+                    <div class="table-container">{html_tb18_2m}</div>
+                </div>
+                <div id="rev_3m" class="rev-sub-content" style="display:none;">
+                    <div class="info-box"><p>🎯 連續三個月營收月增 (MoM) 穩定成長標的。</p><div class="count-badge">符合：{len(res18)} 檔</div></div>
+                    <div class="table-container">{html_tb18}</div>
+                </div>
+                <div id="rev_15x" class="rev-sub-content" style="display:none;">
+                    <div class="info-box"><p>🎯 最新月營收為前月 1.5 倍以上 (月增率 &ge; 50%) 爆發標的。</p><div class="count-badge">符合：{len(res19)} 檔</div></div>
+                    <div class="table-container">{html_tb19}</div>
                 </div>
             </div>
 
@@ -2169,7 +2164,6 @@ def main():
                 document.getElementById(strategyName).style.display = "block";
                 evt.currentTarget.classList.add("active");
                 evt.currentTarget.scrollIntoView({{ behavior: 'smooth', inline: 'center', block: 'nearest' }});
-                if(strategyName === 'Tab_Revenue') filterRevenueMode();
             }}
 
             function switchSubTab(parentTabId, subTargetId) {{
@@ -2182,6 +2176,14 @@ def main():
                 if(subTargetId === 'sub_strat32') {{
                     filterStrat32();
                 }}
+            }}
+
+            function switchRevenueSubTab(targetId) {{
+                const parent = document.getElementById('Tab_Revenue');
+                if (!parent) return;
+                parent.querySelectorAll('.rev-sub-content').forEach(el => el.style.display = 'none');
+                const target = parent.querySelector('#' + targetId);
+                if (target) target.style.display = 'block';
             }}
 
             function filterStrat32() {{
@@ -2211,47 +2213,6 @@ def main():
                     if(show) count++;
                 }});
                 updateVisibleCount('Strat32', count);
-            }}
-
-            function filterRevenueMode() {{
-                let period = document.getElementById('sel_Rev_Period').value;
-                let volOpt = document.getElementById('sel_Rev_Vol').value;
-                
-                let container = document.getElementById('container_rev_table');
-                let countBadge = document.getElementById('count_Revenue');
-                
-                let tbl18_2m = `{html_tb18_2m}`;
-                let tbl18_3m = `{html_tb18}`;
-                let tbl19 = `{html_tb19}`;
-                
-                let targetHtml = tbl18_2m;
-                if (period === '3m') targetHtml = tbl18_3m;
-                if (period === '1.5x') targetHtml = tbl19;
-                
-                container.innerHTML = targetHtml;
-                
-                let table = container.querySelector("table");
-                if(!table) {{
-                    countBadge.innerText = "0";
-                    return;
-                }}
-                
-                let headers = table.querySelectorAll("thead th");
-                let idxVol = -1;
-                headers.forEach((th, i) => {{ if (th.innerText.includes("增量倍數")) idxVol = i; }});
-
-                let count = 0;
-                table.querySelectorAll("tbody tr").forEach(row => {{
-                    let show = true;
-                    if (volOpt === 'yes' && idxVol >= 0) {{
-                        let cells = row.querySelectorAll("td");
-                        let vMul = parseFloat(cells[idxVol].innerText);
-                        if (isNaN(vMul) || vMul < 1.2) show = false;
-                    }}
-                    row.style.display = show ? "" : "none";
-                    if(show) count++;
-                }});
-                countBadge.innerText = count;
             }}
 
             function sortTbody(tbody, colIndex = -1, isAscending = false) {{
@@ -2325,7 +2286,6 @@ def main():
                 enableTableSorting();
                 setTimeout(() => {{
                     filterStrat32();
-                    filterRevenueMode();
                 }}, 300);
             }});
         </script>
@@ -2344,7 +2304,7 @@ def main():
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(html_content)
 
-    print(f"\n✅ 策略 18 邏輯已修正 (支援連續兩個月月增與成交量增自由選擇)！檔案已生成: {html_filename}")
+    print(f"\n✅ 營收動能模組已完美重構！檔案已生成: {html_filename}")
     if os.environ.get("GITHUB_ACTIONS") != "true":
         webbrowser.open(f"file:///{file_path}")
 

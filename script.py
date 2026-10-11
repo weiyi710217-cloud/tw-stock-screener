@@ -410,7 +410,6 @@ def fetch_finmind_revenue(year: int, month: int) -> pd.DataFrame:
     print(f"🌐 透過證交所與櫃買官方 OpenAPI 抓取 [{year}/{month:02d}] 月營收資料...")
     year_roc = year - 1911
     
-    # 證交所(上市公司)與櫃買中心(上櫃公司)官方 OpenAPI 端點
     urls = [
         "https://openapi.twse.com.tw/v1/opendata/t187ap05_L",
         "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap05_O"
@@ -423,22 +422,20 @@ def fetch_finmind_revenue(year: int, month: int) -> pd.DataFrame:
             if resp.status_code == 200:
                 data = resp.json()
                 if isinstance(data, list) and len(data) > 0:
-                    # 印出第一筆資料的欄位名稱，方便確認官方最新命名
-                    # print(f"🔍 官方API欄位範例: {list(data[0].keys())}")
+                    # 💡 把這裡的註解拿掉，執行時會印出官方真正的欄位名稱
+                    print(f"🔍 官方API ({url}) 欄位範例: {list(data[0].keys())}")
                     
                     for item in data:
-                        # 兼容多種可能的欄位名稱
-                        code = str(item.get("公司代號", item.get("stock_id", item.get("Code", "")))).strip()
-                        period = str(item.get("年月", item.get("DataMonth", item.get("Date", "")))).strip()
-                        rev_val = item.get("當月營收", item.get("Revenue", item.get("rev", 0)))
+                        # 兼容所有可能的官方欄位名稱
+                        code = str(item.get("公司代號", item.get("StockNo", item.get("stock_id", item.get("Code", ""))) )).strip()
+                        period = str(item.get("年月", item.get("DataMonth", item.get("Date", item.get("YearMonth", ""))) )).strip()
+                        rev_val = item.get("當月營收", item.get("Revenue", item.get("rev", item.get("CurrentMonthRevenue", 0))))
                         
                         target_period = f"{year_roc}{month:02d}"
-                        
-                        # 有些API的年月格式可能是 "11509" 或是含斜線 "115/09"
                         period_clean = period.replace("/", "").replace("-", "")
                         
                         if period_clean == target_period and len(code) == 4 and code.isdigit():
-                            rev = to_float(rev_val) / 1000.0  # 轉換為千元
+                            rev = to_float(rev_val) / 1000.0
                             if rev > 0:
                                 rows[code] = rev
         except Exception as e:

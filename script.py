@@ -1058,8 +1058,8 @@ def main():
     res32, html_tb32 = build_res(cond32_fn, ["法人3日集中度(%)", "最新漲幅(%)"], [False, False], inst_rename, ["千張大戶比例(%)", "法人1日集中度(%)", "法人2日集中度(%)", "法人3日集中度(%)", "外資(T)", "外資(T-1)", "外資(T-2)", "投信(T)", "投信(T-1)", "投信(T-2)"])
     res33, html_tb33 = build_res(cond33_fn, ["千張大戶比例(%)", "最新漲幅(%)"], [False, False], std_rename, ["千張大戶比例(%)", "120日最高收盤"])
 
-    # 策略 26: 9 月三策略組合挖掘回測
-    print("🔬 啟動策略 26：9 月三策略組合高勝率回測...")
+    # 策略 26: 9 月【任兩策略組合】高勝率回測挖掘
+    print("🔬 啟動策略 26：9 月任意兩策略組合高勝率回測挖掘...")
     cand_strategies = [
         ("1.跳空不補", cond1_fn), ("2.連續墊高", cond2_fn), ("3.量增法人買", cond3_fn),
         ("4.創20日新高", cond4_fn), ("5.旱地拔蔥", cond5_fn), ("6.創五日高", cond6_fn),
@@ -1105,11 +1105,12 @@ def main():
     returns_arr = np.zeros(N, dtype=float)
     returns_arr[valid_ret_mask] = ((close_1008[valid_ret_mask] - open_1001[valid_ret_mask]) / open_1001[valid_ret_mask]) * 100
 
-    combo_triplets = list(itertools.combinations(cand_strategies, 3))
+    # 改為任兩策略組合 (Combinations of 2)
+    combo_pairs = list(itertools.combinations(cand_strategies, 2))
     combo_records = []
 
-    for (name_a, fn_a), (name_b, fn_b), (name_c, fn_c) in combo_triplets:
-        hit_mask = (strat_matrices[name_a] & strat_matrices[name_b] & strat_matrices[name_c]).any(axis=1)
+    for (name_a, fn_a), (name_b, fn_b) in combo_pairs:
+        hit_mask = (strat_matrices[name_a] & strat_matrices[name_b]).any(axis=1)
         sub_mask = hit_mask & valid_ret_mask
         n_samples = int(np.sum(sub_mask))
         if n_samples == 0:
@@ -1122,9 +1123,9 @@ def main():
         median_ret = round(float(np.median(sub_ret)), 2)
 
         combo_records.append({
-            "name_a": name_a, "name_b": name_b, "name_c": name_c,
-            "fn_a": fn_a, "fn_b": fn_b, "fn_c": fn_c,
-            "策略組合": f"{name_a} ＋ {name_b} ＋ {name_c}",
+            "name_a": name_a, "name_b": name_b,
+            "fn_a": fn_a, "fn_b": fn_b,
+            "策略組合": f"{name_a} ＋ {name_b}",
             "上漲率(%)": win_rate,
             "平均漲幅(%)": mean_ret,
             "中位數漲幅(%)": median_ret,
@@ -1149,7 +1150,7 @@ def main():
     df_combos_show["中位數漲幅(%)"] = df_combos_show["中位數漲幅(%)"].apply(color_pct)
     html_tb26 = df_combos_show.to_html(index=False, classes="styled-table backtest-table sortable-table", escape=False)
 
-    # 建立策略 27~31
+    # 建立策略 27~31 (對應前五名兩策略組合)
     top5_combos = df_combos.head(5).to_dict("records")
     strat_results_27_31 = {}
     rank_labels = ["首選", "第二", "第三", "第四", "第五"]
@@ -1158,10 +1159,10 @@ def main():
         if idx < len(top5_combos):
             item = top5_combos[idx]
             c_name = item["策略組合"]
-            f_a, f_b, f_c = item["fn_a"], item["fn_b"], item["fn_c"]
-            cond_today = f_a(0) & f_b(0) & f_c(0)
+            f_a, f_b = item["fn_a"], item["fn_b"]
+            cond_today = f_a(0) & f_b(0)
             res_df = df_merge[cond_today].copy()
-            res_df['近7日符合次數'] = eval_rolling_condition(lambda k: f_a(k) & f_b(k) & f_c(k))[cond_today]
+            res_df['近7日符合次數'] = eval_rolling_condition(lambda k: f_a(k) & f_b(k))[cond_today]
             res_df["增量倍數"] = (res_df["成交量_0"] / res_df["成交量_1"].replace(0, np.nan)).round(2).fillna(0.0)
             res_df = res_df.sort_values(by=["最新漲幅(%)", "增量倍數"], ascending=[False, False])
             res_df = res_df.rename(columns=std_rename)
@@ -1169,7 +1170,7 @@ def main():
             if not res_df.empty:
                 table_html = apply_color_formatting(res_df[base_cols + ["增量倍數"] + chip_cols]).to_html(index=False, classes="styled-table sortable-table", escape=False)
             else:
-                table_html = "<div style='padding: 30px; text-align: center; color: #64748b; font-size: 13px;'>今日最新盤後無同時符合此三策略之股票</div>"
+                table_html = "<div style='padding: 30px; text-align: center; color: #64748b; font-size: 13px;'>今日最新盤後無同時符合此兩策略之股票</div>"
 
             strat_results_27_31[r_num] = {
                 "name": f"{r_num}. 組合{rank_labels[idx]}",
@@ -1289,8 +1290,8 @@ def main():
     # 收集所有策略與詳細說明條件，用於儀錶板卡片與明細頁
     strategies_meta = [
         ("Tab_Strat12", "🌟 綜合排行", "統計所有選股策略預設條件下，累計入選次數最多的前 50 檔最強勢標的排序。", len(res12), html_tb12),
-        ("Tab_Strat27", f"🎖 組合首選 (勝率 {strat_results_27_31[27]['win_rate']}%)", f"三策略組合：{strat_results_27_31[27]['combo_name']}。歷史回測上漲勝率最高的前五名組合之一。", strat_results_27_31[27]["count"], strat_results_27_31[27]["html"]),
-        ("Tab_Strat28", f"🎖 組合第二 (勝率 {strat_results_27_31[28]['win_rate']}%)", f"三策略組合：{strat_results_27_31[28]['combo_name']}。歷史回測表現優異的高勝率組合。", strat_results_27_31[28]["count"], strat_results_27_31[28]["html"]),
+        ("Tab_Strat27", f"🎖 組合首選 (勝率 {strat_results_27_31[27]['win_rate']}%)", f"兩策略組合：{strat_results_27_31[27]['combo_name']}。歷史回測上漲勝率最高的前五名組合之一。", strat_results_27_31[27]["count"], strat_results_27_31[27]["html"]),
+        ("Tab_Strat28", f"🎖 組合第二 (勝率 {strat_results_27_31[28]['win_rate']}%)", f"兩策略組合：{strat_results_27_31[28]['combo_name']}。歷史回測表現優異的高勝率組合。", strat_results_27_31[28]["count"], strat_results_27_31[28]["html"]),
         ("Tab_Strat17", "🏆 創 120 日半年新高", "【創高突破】最新收盤價大於過去 120 個交易日內每一天的收盤價（突破半年新高，代表中長線多頭表態）。", len(res17), html_tb17),
         ("Tab_Strat4", "🏆 創 20 日新高 ＋ 投信不賣", "【創高突破】最新收盤價創 20 日新高 ＋ 過去 7 天投信無賣超 ＋ 當日成交量大於前一日（法人護盤創高）。", len(res4), html_tb4),
         ("Tab_Strat6", "🏆 創 5 日高 ＋ 跳空量增", "【短線爆發】創 5 日新高 ＋ 開盤向上跳空且低點不補缺口 ＋ 成交量放大 ＋ 法人連續 3 天不賣超。", len(res6), html_tb6),
@@ -1308,7 +1309,7 @@ def main():
         ("Tab_Strat20", "🚀 外資連三日買超且越買越多", "【外資連買加速】外資連續 3 天買超且每日買超張數遞增（越買越多） ＋ 當日成交量放大 1.2 倍 ＋ 股價收紅。", len(res20), html_tb20),
         ("Tab_Strat3", "🚀 投信不賣 ＋ 外資連買", "【法人聯手】最新日成交量放大 ＋ 投信連續 7 天無賣超 ＋ 外資當日買超（投信鎖碼、外資助攻）。", len(res3), html_tb3),
         ("Tab_Strat11", "🎯 上櫃實體紅 K 強勢股", "【中小型強勢】限定上櫃（OTC）股票 ＋ 當日收盤價大於開盤價（實體紅K棒）且帶有強勢表現。", len(res11), html_tb11),
-        ("Tab_Backtest26", "📊 9月三策略組合挖掘", "【量化回測總覽】回測 9 月份任三策略同時命中之個股，以 10/1 開盤至 10/8 收盤計算實際績效與勝率排行。", 969, html_tb26),
+        ("Tab_Backtest26", "📊 9月任兩策略組合挖掘", "【量化回測總覽】回測 9 月份任兩策略同時命中之個股，以 10/1 開盤至 10/8 收盤計算實際績效與勝率排行。", len(df_combos), html_tb26),
         ("Tab_Backtest21", "📊 過去30天單策略勝率", "【量化回測總覽】統計各策略在過去 30 個交易日內選出個股的「隔日收盤收紅（上漲）」歷史勝率與平均報酬。", len(df_strat21), html_tb21)
     ]
 
@@ -1342,7 +1343,7 @@ def main():
         </div>
         """
 
-        # 針對每一個策略明細頁面，加上即時篩選工具列（外資、投信、千張大戶篩選）
+        # 針對每一個策略明細頁面，加裝外資、投信、千張大戶即時篩選工具列
         filter_toolbar = f"""
         <div class="filter-toolbar">
             <div class="filter-group">
@@ -1921,7 +1922,6 @@ def main():
                 const rows = table.querySelectorAll('tbody tr');
                 const headers = Array.from(table.querySelectorAll('thead th'));
 
-                // 定義對應表頭關鍵字
                 let colIdx = -1;
                 headers.forEach((th, idx) => {{
                     let txt = th.innerText;
@@ -1934,62 +1934,42 @@ def main():
                 let visibleCount = 0;
 
                 rows.forEach(row => {{
-                    let showByThis = true;
-                    if(colIdx >= 0) {{
-                        const cell = row.querySelectorAll('td')[colIdx];
-                        if(cell) {{
-                            const num = parseFloat(cell.innerText.replace(/,/g, '').replace(/%/g, ''));
-                            if(!isNaN(num)) {{
-                                if(val === 'ge0' && num < 0) showByThis = false;
-                                if(val === 'ge50' && num < 50) showByThis = false;
-                                if(val === 'ge100' && num < 100) showByThis = false;
-                                if(val === 'ge200' && num < 200) showByThis = false;
-                                if(val === 'ge500' && num < 500) showByThis = false;
-                                if(val === 'ge35' && num < 35) showByThis = false;
-                                if(val === 'ge50' && num < 50 && filterType === 'whale') showByThis = false;
-                                if(val === 'ge70' && num < 70) showByThis = false;
-                            }}
-                        }}
-                    }}
+                    let toolbars = page.querySelectorAll('.filter-toolbar select');
+                    let passAll = true;
 
-                    // 檢查是否同時符合同一頁面上的其他篩選器
-                    const toolbars = page.querySelectorAll('.filter-toolbar select');
-                    let allMatch = true;
-                    // 簡易實作：若本行被任一目前選定的非all條件排除則隱藏
-                    if(!showByThis) {{
-                        row.style.display = 'none';
-                    }} else {{
-                        // 重新確認該行是否符合所有下拉選單條件
-                        let passAll = true;
-                        toolbars.forEach(tb => {{
-                            if(tb.value !== 'all') {{
-                                let tType = 'foreign';
-                                if(tb.parentNode.innerText.includes('投信')) tType = 'trust';
-                                if(tb.parentNode.innerText.includes('大戶')) tType = 'whale';
-                                
-                                let cIdx = -1;
-                                headers.forEach((th, idx) => {{
-                                    let txt = th.innerText;
-                                    if(tType === 'foreign' && (txt.includes('外資近七日') || txt.includes('外資'))) cIdx = idx;
-                                    if(tType === 'trust' && (txt.includes('投信近七日') || txt.includes('投信'))) cIdx = idx;
-                                    if(tType === 'whale' && txt.includes('千張大戶')) cIdx = idx;
-                                }});
-                                if(cIdx >= 0) {{
-                                    let cVal = parseFloat(row.querySelectorAll('td')[cIdx].innerText.replace(/,/g, '').replace(/%/g, ''));
-                                    let req = tb.value;
+                    toolbars.forEach(tb => {{
+                        if(tb.value !== 'all') {{
+                            let tType = 'foreign';
+                            if(tb.parentNode.innerText.includes('投信')) tType = 'trust';
+                            if(tb.parentNode.innerText.includes('大戶')) tType = 'whale';
+                            
+                            let cIdx = -1;
+                            headers.forEach((th, idx) => {{
+                                let txt = th.innerText;
+                                if(tType === 'foreign' && (txt.includes('外資近七日') || txt.includes('外資'))) cIdx = idx;
+                                if(tType === 'trust' && (txt.includes('投信近七日') || txt.includes('投信'))) cIdx = idx;
+                                if(tType === 'whale' && txt.includes('千張大戶')) cIdx = idx;
+                            }});
+                            
+                            if(cIdx >= 0) {{
+                                let cVal = parseFloat(row.querySelectorAll('td')[cIdx].innerText.replace(/,/g, '').replace(/%/g, ''));
+                                let req = tb.value;
+                                if(!isNaN(cVal)) {{
                                     if(req === 'ge0' && cVal < 0) passAll = false;
                                     if(req === 'ge50' && cVal < 50) passAll = false;
                                     if(req === 'ge100' && cVal < 100) passAll = false;
                                     if(req === 'ge200' && cVal < 200) passAll = false;
                                     if(req === 'ge500' && cVal < 500) passAll = false;
                                     if(req === 'ge35' && cVal < 35) passAll = false;
+                                    if(req === 'ge50' && cVal < 50 && tType === 'whale') passAll = false;
                                     if(req === 'ge70' && cVal < 70) passAll = false;
                                 }}
                             }}
-                        }});
-                        row.style.display = passAll ? '' : 'none';
-                        if(passAll) visibleCount++;
-                    }}
+                        }}
+                    }});
+
+                    row.style.display = passAll ? '' : 'none';
+                    if(passAll) visibleCount++;
                 }});
 
                 const badge = page.querySelector('.count-badge span');
@@ -2091,7 +2071,7 @@ def main():
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(html_content)
 
-    print(f"\n✅ 各策略即時篩選器已全數加裝完成！網頁已生成: {html_filename}")
+    print(f"\n✅ 任兩策略組合回測與即時篩選器已全數更新完成！網頁已生成: {html_filename}")
     if os.environ.get("GITHUB_ACTIONS") != "true":
         webbrowser.open(f"file:///{file_path}")
 

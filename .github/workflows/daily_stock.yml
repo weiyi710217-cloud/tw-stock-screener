@@ -6,6 +6,9 @@ on:
     - cron: '15 8 * * 1-5'
   workflow_dispatch: # 支援手動一鍵點擊執行
 
+env:
+  FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+
 permissions:
   contents: write
   pages: write

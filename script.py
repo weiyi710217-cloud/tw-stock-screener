@@ -401,52 +401,53 @@ def get_foreign_holdings() -> pd.DataFrame:
 
     return pd.DataFrame(columns=["股票代號", "外資持股比例(%)", "發行總張數"])
 
-# ==========================================
-# 【FinMind API 整合營收抓取與智慧快取機制】
-# ==========================================
+
+from io import StringIO
+
 def fetch_finmind_revenue(year: int, month: int) -> pd.DataFrame:
+    # 這裡保留原本的快取檔名架構，每個月只需成功抓一次就會存入 stock_cache/
     cache_file = os.path.join(CACHE_DIR, f"finmind_rev_{year}_{month:02d}.csv")
     if is_valid_cache(cache_file, min_size=50):
         return pd.read_csv(cache_file, dtype={"股票代號": str})
 
-    print(f"🌐 透過 FinMind API 抓取 [{year}/{month:02d}] 營收資料...")
-    start_date = f"{year}-{month:02d}-01"
-    
-    token = os.environ.get("FINMIND_TOKEN", "")
-    if not token:
-        print("⚠ 警告：未偵測到 FINMIND_TOKEN 環境變數！")
-    
-    url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockMonthRevenue&start_date={start_date}&token={token}"
-    
-    try:
-        resp = requests.get(url, headers=OPENAPI_HEADERS, timeout=10)
-        print(f"🔍 API HTTP 狀態碼: {resp.status_code}")
-        data = resp.json()
-    except Exception as e:
-        print(f"⚠ API 請求例外錯誤: {e}")
-        data = {}
-    
-    rows = []
-    if isinstance(data, dict):
-        print(f"🔍 API 回傳訊息 (msg): {data.get('msg')}")
-        if data.get("data"):
-            print(f"🔍 API 原始資料筆數: {len(data['data'])}")
-            for item in data["data"]:
-                date_str = str(item.get("date", ""))
-                if date_str.startswith(f"{year}-{month:02d}"):
-                    stock_id = str(item.get("stock_id", "")).strip()
-                    if len(stock_id) == 4 and stock_id.isdigit():
-                        rev = to_float(item.get("revenue", 0)) / 1000.0
-                        rows.append({"股票代號": stock_id, f"營收_{year-1911}_{month:02d}": rev})
+    print(f"🌐 透過官方公開來源抓取 [{year}/{month:02d}] 月營收資料...")
+    year_roc = year - 1911
+    rows = {}
+
+    # 同時向上市 (sii) 與上櫃 (otc) 的公開資訊觀測站靜態網頁發送請求
+    for market in ["sii", "otc"]:
+        url = f"https://mops.twse.com.tw/nas/t21/{market}/t21sc03_{year_roc}_{month}_0.html"
+        try:
+            resp = requests.get(url, headers=TWSE_HEADERS, timeout=10)
+            if resp.status_code != 200:
+                continue
+            # 官方網頁編碼通常為 big5
+            html = resp.content.decode("big5", errors="ignore")
+            tables = pd.read_html(StringIO(html))
+            
+            for t in tables:
+                if t.shape[1] < 11:
+                    continue
+                for r in t.itertuples(index=False):
+                    code = str(r[0]).strip()
+                    if code.isdigit() and len(code) == 4:
+                        rev = to_float(r[2])  # 當月營收
+                        if rev > 0:
+                            rows[code] = rev
+        except Exception as e:
+            print(f"⚠ 抓取 {market} {year_roc}/{month:02d} 營收發生錯誤: {e}")
+        time.sleep(0.3)
 
     if rows:
-        df_res = pd.DataFrame(rows).drop_duplicates(subset=["股票代號"])
-        print(f"🔍 FinMind [{year}/{month:02d}] 成功解析筆數: {len(df_res)}")
+        col_name = f"營收_{year_roc}_{month:02d}"
+        df_res = pd.DataFrame({"股票代號": list(rows.keys()), col_name: list(rows.values())})
+        print(f"🔍 官方來源 [{year}/{month:02d}] 成功解析筆數: {len(df_res)}")
         df_res.to_csv(cache_file, index=False, encoding="utf-8-sig")
         return df_res
-    
-    print(f"⚠ FinMind [{year}/{month:02d}] 無有效資料或解析為空")
+
+    print(f"⚠ 官方來源 [{year}/{month:02d}] 無有效資料")
     return pd.DataFrame(columns=["股票代號", f"營收_{year-1911}_{month:02d}"])
+
 
 def get_revenue_analysis() -> pd.DataFrame:
     today = datetime.date.today()

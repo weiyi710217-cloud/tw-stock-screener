@@ -407,36 +407,42 @@ def fetch_finmind_revenue(year: int, month: int) -> pd.DataFrame:
     if is_valid_cache(cache_file, min_size=50):
         return pd.read_csv(cache_file, dtype={"股票代號": str})
 
-    print(f"🌐 透過證交所 OpenAPI 抓取 [{year}/{month:02d}] 月營收資料...")
+    print(f"🌐 透過證交所與櫃買官方 OpenAPI 抓取 [{year}/{month:02d}] 月營收資料...")
     year_roc = year - 1911
     
-    # 證交所/櫃買官方每月份營收彙總 OpenAPI (示範以證交所公開資料集為主)
-    # 若該月份資料尚未完整公布，會自動退回空表以避免報錯
+    # 證交所(上市公司)與櫃買中心(上櫃公司)官方 OpenAPI 端點
     urls = [
-        f"https://openapi.twse.com.tw/v1/opendata/t187ap05_L",  # 上市公司月營收
-        f"https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap05_O" # 上櫃公司月營收
+        "https://openapi.twse.com.tw/v1/opendata/t187ap05_L",
+        "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap05_O"
     ]
     
     rows = {}
     for url in urls:
         try:
-            resp = requests.get(url, headers=OPENAPI_HEADERS, timeout=10)
+            resp = requests.get(url, headers=OPENAPI_HEADERS, timeout=15)
             if resp.status_code == 200:
                 data = resp.json()
-                for item in data:
-                    # 欄位名稱依官方 OpenAPI 規範對應
-                    # 通常包含 '公司代號', '年月' (例如 11509), '當月營收'
-                    code = str(item.get("公司代號", item.get("stock_id", ""))).strip()
-                    period = str(item.get("年月", item.get("DataMonth", ""))).strip()
+                if isinstance(data, list) and len(data) > 0:
+                    # 印出第一筆資料的欄位名稱，方便確認官方最新命名
+                    # print(f"🔍 官方API欄位範例: {list(data[0].keys())}")
                     
-                    # 比對民國年及月份 (例如 11509)
-                    target_period = f"{year_roc}{month:02d}"
-                    if period == target_period and len(code) == 4 and code.isdigit():
-                        rev = to_float(item.get("當月營收", item.get("Revenue", 0))) / 1000.0
-                        if rev > 0:
-                            rows[code] = rev
+                    for item in data:
+                        # 兼容多種可能的欄位名稱
+                        code = str(item.get("公司代號", item.get("stock_id", item.get("Code", "")))).strip()
+                        period = str(item.get("年月", item.get("DataMonth", item.get("Date", "")))).strip()
+                        rev_val = item.get("當月營收", item.get("Revenue", item.get("rev", 0)))
+                        
+                        target_period = f"{year_roc}{month:02d}"
+                        
+                        # 有些API的年月格式可能是 "11509" 或是含斜線 "115/09"
+                        period_clean = period.replace("/", "").replace("-", "")
+                        
+                        if period_clean == target_period and len(code) == 4 and code.isdigit():
+                            rev = to_float(rev_val) / 1000.0  # 轉換為千元
+                            if rev > 0:
+                                rows[code] = rev
         except Exception as e:
-            print(f"⚠ 抓取官方 OpenAPI 發生錯誤: {e}")
+            print(f"⚠ 抓取官方 OpenAPI 發生錯誤 ({url}): {e}")
 
     if rows:
         col_name = f"營收_{year_roc}_{month:02d}"

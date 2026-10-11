@@ -1280,30 +1280,36 @@ def main():
         res12 = pd.DataFrame()
         html_tb12 = "<p style='text-align:center;'>目前無任何股票入選預設策略</p>"
 
-    # 收集所有策略與對應的 HTML 內容，用於儀錶板卡片與明細頁
+    initial_res32 = res32[
+        (res32['法人3d集中度(%)'] >= 20.0) if '法人3d集中度(%)' in res32.columns else 
+        (res32['法人3日集中度(%)'] >= 20.0)
+    ] if not res32.empty else pd.DataFrame()
+    initial_count_32 = len(initial_res32)
+
+    # 收集所有策略與詳細說明條件，用於儀錶板卡片與明細頁
     strategies_meta = [
-        ("Tab_Strat12", "🌟 綜合排行", "統計所有策略預設條件下，選中最多次的股票排序。", len(res12), html_tb12),
-        ("Tab_Strat27", "🎖 組合首選 (策略27)", f"歷史勝率 {strat_results_27_31[27]['win_rate']}% 的三策略黃金組合。", strat_results_27_31[27]["count"], strat_results_27_31[27]["html"]),
-        ("Tab_Strat28", "🎖 組合第二 (策略28)", f"歷史勝率 {strat_results_27_31[28]['win_rate']}% 的三策略黃金組合。", strat_results_27_31[28]["count"], strat_results_27_31[28]["html"]),
-        ("Tab_Strat17", "🏆 創 120 日半年新高", "最新收盤價大於過去 120 個交易日內最高價。", len(res17), html_tb17),
-        ("Tab_Strat4", "🏆 創 20 日新高 ＋ 投信不賣", "創 20 日新高、過去七天投信不賣且量增。", len(res4), html_tb4),
-        ("Tab_Strat6", "🏆 創 5 日高 ＋ 跳空量增", "創五日新高 & 跳空量增 & 法人連三日不賣。", len(res6), html_tb6),
-        ("Tab_Strat7", "🏆 創 20 日高 ＋ 底底高", "創 20 日新高 & 底底高 & 收高量增 & 法人連七不賣。", len(res7), html_tb7),
-        ("Tab_Strat13", "🏆 逼近 60 日高 (-2%以內)", "距離近 60 日最高收盤價在 -2% 以內，量大於 500 張。", len(res13), html_tb13),
-        ("Tab_Strat15", "🏆 壓縮突破 60 日高", "收盤價創 60 日新高，且量增 1.2 倍，底部區間壓縮突破。", len(res15), html_tb15),
-        ("Tab_Strat23", "🔥 突破 10 天最大量高點", "最新收盤價正式站上過去 10 個交易日內成交量最大當日的最高價。", len(res23), html_tb23),
-        ("Tab_Strat16", "🔥 突破 60 天最大量高點", "突破 60 日成交量最大當日高點，外資投信近 7 天無賣出。", len(res16), html_tb16),
-        ("Tab_Strat22", "📈 高勝率基因精選", "融合創五日高、跳空、連續墊高精華。", len(res22), html_tb22),
-        ("Tab_Strat1", "📈 向上跳空不補＋連續量增", "向上跳空不回補、連續量增。", len(res1), html_tb1),
-        ("Tab_Strat2", "📈 階梯式墊高 ＋ 外資點火", "階梯式墊高、外資點火、過去七天法人不賣出。", len(res2), html_tb2),
-        ("Tab_Strat33", "👑 絕對鎖碼 (大戶>70%)", "千張大戶比例 > 70% ＋ 多頭排列 ＋ 距半年高點 ±5% 內。", len(res33), html_tb33),
-        ("Tab_Strat32", "👑 大戶鎖碼 ＋ 法人集中度", "千張大戶佔比 > 60% ＋ 法人買超集中度高。", 0, html_tb32),
-        ("Tab_Strat25", "👑 倚強科模式複製", "千張大戶 &ge; 60% ＋ 5MA>20MA ＋ 出量 1.5 倍。", len(res25), html_tb25),
-        ("Tab_Strat20", "🚀 外資連三日買超且越買越多", "外資連三買且張數遞增 ＋ 最新一日出量收紅。", len(res20), html_tb20),
-        ("Tab_Strat3", "🚀 投信不賣 ＋ 外資連買", "最新日量增、投信七日不賣出、外資連續買超。", len(res3), html_tb3),
-        ("Tab_Strat11", "🎯 上櫃實體紅 K 強勢股", "限定上櫃股票 | 實體紅K強勢股 (收盤大於開盤)。", len(res11), html_tb11),
-        ("Tab_Backtest26", "📊 9月三策略組合挖掘", "回測 9 月份任三策略同時命中之 10/1~10/8 實際績效。", 969, html_tb26),
-        ("Tab_Backtest21", "📊 過去30天單策略勝率", "統計各策略在過去 30 個交易日內選出個股的隔日上漲勝率。", len(df_strat21), html_tb21)
+        ("Tab_Strat12", "🌟 綜合排行", "統計所有選股策略預設條件下，累計入選次數最多的前 50 檔最強勢標的排序。", len(res12), html_tb12),
+        ("Tab_Strat27", f"🎖 組合首選 (勝率 {strat_results_27_31[27]['win_rate']}%)", f"三策略組合：{strat_results_27_31[27]['combo_name']}。歷史回測上漲勝率最高的前五名組合之一。", strat_results_27_31[27]["count"], strat_results_27_31[27]["html"]),
+        ("Tab_Strat28", f"🎖 組合第二 (勝率 {strat_results_27_31[28]['win_rate']}%)", f"三策略組合：{strat_results_27_31[28]['combo_name']}。歷史回測表現優異的高勝率組合。", strat_results_27_31[28]["count"], strat_results_27_31[28]["html"]),
+        ("Tab_Strat17", "🏆 創 120 日半年新高", "【創高突破】最新收盤價大於過去 120 個交易日內每一天的收盤價（突破半年新高，代表中長線多頭表態）。", len(res17), html_tb17),
+        ("Tab_Strat4", "🏆 創 20 日新高 ＋ 投信不賣", "【創高突破】最新收盤價創 20 日新高 ＋ 過去 7 天投信無賣超 ＋ 當日成交量大於前一日（法人護盤創高）。", len(res4), html_tb4),
+        ("Tab_Strat6", "🏆 創 5 日高 ＋ 跳空量增", "【短線爆發】創 5 日新高 ＋ 開盤向上跳空且低點不補缺口 ＋ 成交量放大 ＋ 法人連續 3 天不賣超。", len(res6), html_tb6),
+        ("Tab_Strat7", "🏆 創 20 日新高 ＋ 底底高", "【波段強勢】創 20 日新高 ＋ 股價與低點持續墊高（底底高） ＋ 成交量放大 ＋ 法人連續 7 天無賣超。", len(res7), html_tb7),
+        ("Tab_Strat13", "🏆 逼近 60 日高 (-2%以內)", "【蓄勢待發】最新收盤價距離近 60 日最高收盤價在 -2% 以內，且當日成交量大於 500 張（即將挑戰前高）。", len(res13), html_tb13),
+        ("Tab_Strat15", "🏆 壓縮突破 60 日高", "【區間突破】收盤價創 60 日新高 ＋ 成交量放大 1.2 倍以上 ＋ 前期 60 日股價震幅小於 10%（帶量突破壓縮區）。", len(res15), html_tb15),
+        ("Tab_Strat23", "🔥 突破 10 天最大量高點", "【量價突破】最新收盤價正式站上過去 10 個交易日內成交量最大當日的最高價（消化解套賣壓）。", len(res23), html_tb23),
+        ("Tab_Strat16", "🔥 突破 60 天最大量高點", "【巨量突破】突破過去 60 天內最大成交量當日的最高價 ＋ 第一天剛突破 ＋ 外資投信近 7 天無賣出。", len(res16), html_tb16),
+        ("Tab_Strat22", "📈 高勝率基因精選", "【複合強勢】融合多項高勝率回測模組：創 5 日高 ＋ 跳空缺口 ＋ 階梯式墊高 ＋ 量能放大 ＋ 法人無賣壓。", len(res22), html_tb22),
+        ("Tab_Strat1", "📈 向上跳空不補＋連續量增", "【強勢缺口】當日最低價大於前一日收盤價（向上跳空且不回補） ＋ 成交量連續多日放大。", len(res1), html_tb1),
+        ("Tab_Strat2", "📈 階梯式墊高 ＋ 外資點火", "【步步為營】收盤價高於前一日且低點不破前一日收盤（階梯墊高） ＋ 外資連續買超點火。", len(res2), html_tb2),
+        ("Tab_Strat33", "👑 絕對鎖碼 (大戶>70%)", "【主力重壓】千張大戶持股比例 > 70% ＋ 5/20/60MA 均線多頭排列 ＋ 距離半年高點在 -5% ~ +5% 內。", len(res33), html_tb33),
+        ("Tab_Strat32", "👑 大戶鎖碼 ＋ 法人集中度", "【籌碼高度集中】千張大戶比例 >= 60% ＋ 過去 1~3 天「外資+投信」合計買超佔總成交量比例達標（20%以上）。", initial_count_32, html_tb32),
+        ("Tab_Strat25", "👑 倚強科模式複製", "【飆股複製】千張大戶 >= 60% ＋ 5MA > 20MA 均線發散 ＋ 成交量放大 1.5 倍 ＋ 近 10 日漲幅 3%~25% 起漲區。", len(res25), html_tb25),
+        ("Tab_Strat20", "🚀 外資連三日買超且越買越多", "【外資連買加速】外資連續 3 天買超且每日買超張數遞增（越買越多） ＋ 當日成交量放大 1.2 倍 ＋ 股價收紅。", len(res20), html_tb20),
+        ("Tab_Strat3", "🚀 投信不賣 ＋ 外資連買", "【法人聯手】最新日成交量放大 ＋ 投信連續 7 天無賣超 ＋ 外資當日買超（投信鎖碼、外資助攻）。", len(res3), html_tb3),
+        ("Tab_Strat11", "🎯 上櫃實體紅 K 強勢股", "【中小型強勢】限定上櫃（OTC）股票 ＋ 當日收盤價大於開盤價（實體紅K棒）且帶有強勢表現。", len(res11), html_tb11),
+        ("Tab_Backtest26", "📊 9月三策略組合挖掘", "【量化回測總覽】回測 9 月份任三策略同時命中之個股，以 10/1 開盤至 10/8 收盤計算實際績效與勝率排行。", 969, html_tb26),
+        ("Tab_Backtest21", "📊 過去30天單策略勝率", "【量化回測總覽】統計各策略在過去 30 個交易日內選出個股的「隔日收盤收紅（上漲）」歷史勝率與平均報酬。", len(df_strat21), html_tb21)
     ]
 
     warning_html = ""
@@ -1343,7 +1349,7 @@ def main():
                 <h2>{title}</h2>
             </div>
             <div class="info-box">
-                <p>🎯 <b>選股說明：</b> {desc}</p>
+                <p>🎯 <b>詳細選股與量化條件：</b> {desc}</p>
                 <div class="count-badge">符合：{count} 檔</div>
             </div>
             <div class="table-container">{tbl_html}</div>
@@ -1454,7 +1460,7 @@ def main():
                 color: var(--text-muted);
                 line-height: 1.3;
                 margin-bottom: 8px;
-                height: 28px;
+                height: 32px;
                 overflow: hidden;
             }}
             .dash-card-badge {{
@@ -1733,7 +1739,7 @@ def main():
             <!-- 儀錶板首頁 (Dashboard) -->
             <div id="Dashboard" class="page-view">
                 <div class="info-box">
-                    <p>🎯 <b>行動端儀錶板：</b> 請點擊下方卡片即可進入各策略明細表，或點擊右上角隨時查看「我的最愛」。</p>
+                    <p>🎯 <b>行動端儀錶板：</b> 點擊下方任意策略卡片，即可查看該策略的詳細選股條件與符合個股清單。</p>
                 </div>
                 <div class="dash-grid">
                     {dashboard_cards_html}
@@ -1751,7 +1757,7 @@ def main():
                     <button class="add-stock-btn" onclick="addCustomStock()">新增觀察 +</button>
                 </div>
                 <div class="info-box">
-                    <p>🎯 <b>自選清單說明：</b> 包含一鍵勾選的標的與您手動新增的觀察股。</p>
+                    <p>🎯 <b>自選清單說明：</b> 包含您從各策略中點擊 ⭐ 加入的標的，以及手動輸入代號新增的觀察股，資料會安全存放在您的手機瀏覽器中。</p>
                     <div class="count-badge">💖 總計觀察：<span id="count_Tab_Favorites">0</span> 檔</div>
                 </div>
                 <div id="fav-empty-msg" style="text-align:center; padding: 40px; color:#64748b; font-size:14px; display:none;">
@@ -1934,7 +1940,7 @@ def main():
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(html_content)
 
-    print(f"\n✅ 手機端儀錶板與自選股頁面架構已完美生成: {html_filename}")
+    print(f"\n✅ 策略說明已詳細化，手機端儀錶板網頁已生成: {html_filename}")
     if os.environ.get("GITHUB_ACTIONS") != "true":
         webbrowser.open(f"file:///{file_path}")
 

@@ -1350,7 +1350,7 @@ def main():
             </div>
             <div class="info-box">
                 <p>🎯 <b>詳細選股與量化條件：</b> {desc}</p>
-                <div class="count-badge">符合：<span id="count_{tab_id}">{count}</span> 檔</div>
+                <div class="count-badge">符合：{count} 檔</div>
             </div>
             <div class="table-container">{tbl_html}</div>
         </div>

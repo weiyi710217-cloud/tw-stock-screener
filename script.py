@@ -411,21 +411,26 @@ def fetch_finmind_revenue(year: int, month: int) -> pd.DataFrame:
 
     print(f"🌐 透過 FinMind API 抓取 [{year}/{month:02d}] 營收資料...")
     start_date = f"{year}-{month:02d}-01"
-    if month == 12:
-        end_date = f"{year+1}-01-01"
-    else:
-        end_date = f"{year}-{month+1:02d}-01"
-
-    url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockMonthRevenue&start_date={start_date}&end_date={end_date}"
+    
+    # FinMind API 正式網址 (若您有 FinMind token 可串接在後面，若無則直接呼叫公開端點)
+    url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockMonthRevenue&data_id=&start_date={start_date}"
+    
     data = safe_request_json(url, headers=OPENAPI_HEADERS)
     
     rows = []
-    if isinstance(data, dict) and data.get("data"):
-        for item in data["data"]:
-            stock_id = str(item.get("stock_id", "")).strip()
-            if len(stock_id) == 4 and stock_id.isdigit():
-                rev = to_float(item.get("revenue", 0)) / 1000.0  
-                rows.append({"股票代號": stock_id, f"營收_{year-1911}_{month:02d}": rev})
+    if isinstance(data, dict):
+        if data.get("msg") != "success":
+            print(f"⚠ FinMind API 回傳狀態: {data.get('msg')}")
+        
+        if data.get("data"):
+            for item in data["data"]:
+                # 確保是該年月的資料
+                date_str = str(item.get("date", ""))
+                if date_str.startswith(f"{year}-{month:02d}"):
+                    stock_id = str(item.get("stock_id", "")).strip()
+                    if len(stock_id) == 4 and stock_id.isdigit():
+                        rev = to_float(item.get("revenue", 0)) / 1000.0
+                        rows.append({"股票代號": stock_id, f"營收_{year-1911}_{month:02d}": rev})
 
     if rows:
         df_res = pd.DataFrame(rows).drop_duplicates(subset=["股票代號"])
@@ -433,7 +438,7 @@ def fetch_finmind_revenue(year: int, month: int) -> pd.DataFrame:
         df_res.to_csv(cache_file, index=False, encoding="utf-8-sig")
         return df_res
     
-    print(f"⚠ FinMind [{year}/{month:02d}] 無有效資料")
+    print(f"⚠ FinMind [{year}/{month:02d}] 無有效資料或解析為空")
     return pd.DataFrame(columns=["股票代號", f"營收_{year-1911}_{month:02d}"])
 
 def get_revenue_analysis() -> pd.DataFrame:

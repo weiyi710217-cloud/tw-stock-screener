@@ -402,52 +402,73 @@ def get_foreign_holdings() -> pd.DataFrame:
     return pd.DataFrame(columns=["股票代號", "外資持股比例(%)", "發行總張數"])
 
 
-def fetch_finmind_revenue(year: int, month: int) -> pd.DataFrame:
-    cache_file = os.path.join(CACHE_DIR, f"finmind_rev_{year}_{month:02d}.csv")
-    if is_valid_cache(cache_file, min_size=50):
-        return pd.read_csv(cache_file, dtype={"股票代號": str})
+def get_revenue_analysis() -> pd.DataFrame:
+    today = datetime.date.today()
+    cur_year = today.year
+    cur_month = today.month
 
-    print(f"🌐 透過證交所與櫃買官方 OpenAPI 抓取 [{year}/{month:02d}] 月營收資料...")
-    year_roc = year - 1911
-    target_period = f"{year_roc}{month:02d}"  # 例如民國115年8月為 "11508"
+    # 動態尋找最近確實有資料的三個月份（例如：2026/06, 2026/07, 2026/08 或 2026/07, 2026/08, 2026/09）
+    # 我們直接檢查最近 4 個月，抓取有成功產生物件的月份來做分析
+    target_months = []
+    for i in range(1, 5):
+        m = cur_month - i
+        y = cur_year
+        while m <= 0:
+            m += 12
+            y -= 1
+        target_months.append((y, m))
+
+    target_months = list(reversed(target_months)) # 舊到新
+    print(f"📊 檢查可用營收區間: {[f'{y}/{m:02d}' for y, m in target_months]}...")
+
+    df_merged = None
+    valid_rev_cols = []
     
-    urls = [
-        "https://openapi.twse.com.tw/v1/opendata/t187ap05_L",
-        "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap05_O"
-    ]
-    
-    rows = {}
-    for url in urls:
-        try:
-            resp = requests.get(url, headers=OPENAPI_HEADERS, timeout=15)
-            if resp.status_code == 200:
-                data = resp.json()
-                if isinstance(data, list) and len(data) > 0:
-                    for item in data:
-                        # 對應您剛剛印出的官方精準欄位名稱
-                        code = str(item.get("公司代號", "")).strip()
-                        period = str(item.get("資料年月", "")).strip()
-                        rev_val = item.get("營業收入-當月營收", 0)
-                        
-                        # 清理並比對民國年月 (例如 "11508")
-                        period_clean = period.replace("/", "").replace("-", "").strip()
-                        
-                        if period_clean == target_period and len(code) == 4 and code.isdigit():
-                            rev = to_float(rev_val) / 1000.0  # 轉換為千元
-                            if rev > 0:
-                                rows[code] = rev
-        except Exception as e:
-            print(f"⚠ 抓取官方 OpenAPI 發生錯誤 ({url}): {e}")
+    for y, m in target_months:
+        df_m = fetch_finmind_revenue(y, m)
+        col_name = f"營收_{y-1911}_{m:02d}"
+        if not df_m.empty and col_name in df_m.columns:
+            valid_rev_cols.append(col_name)
+            if df_merged is None:
+                df_merged = df_m
+            else:
+                df_merged = pd.merge(df_merged, df_m, on="股票代號", how="outer")
 
-    if rows:
-        col_name = f"營收_{year_roc}_{month:02d}"
-        df_res = pd.DataFrame({"股票代號": list(rows.keys()), col_name: list(rows.values())})
-        print(f"🔍 官方 OpenAPI [{year}/{month:02d}] 成功解析筆數: {len(df_res)}")
-        df_res.to_csv(cache_file, index=False, encoding="utf-8-sig")
-        return df_res
+    if df_merged is None or len(valid_rev_cols) < 2:
+        return pd.DataFrame(columns=["股票代號", "營收連3月月增", "營收連2月月增", "最新營收月增率(%)", "營收爆發1.5倍"])
 
-    print(f"⚠ 官方 OpenAPI [{year}/{month:02d}] 無有效資料")
-    return pd.DataFrame(columns=["股票代號", f"營收_{year-1911}_{month:02d}"])
+    # 取最後有效的三個月份（如果有的話），否則取最後兩個月
+    m2 = valid_rev_cols[-3] if len(valid_rev_cols) >= 3 else valid_rev_cols[-2]
+    m1 = valid_rev_cols[-2]
+    m0 = valid_rev_cols[-1]
+
+    print(f"📊 最終參與營收動能比較的月份: {m2}, {m1}, {m0}")
+
+    for c in [m2, m1, m0]:
+        if c not in df_merged.columns:
+            df_merged[c] = 0.0
+        df_merged[c] = pd.to_numeric(df_merged[c], errors="coerce").fillna(0)
+
+    # 寬鬆且穩健的成長條件，確保能篩選出飆股
+    cond_growth_3m = (
+        (df_merged[m0] > df_merged[m1]) &
+        (df_merged[m1] > df_merged[m2]) &
+        (df_merged[m0] > 0)
+    )
+
+    cond_growth_2m = (
+        (df_merged[m0] > df_merged[m1]) &
+        (df_merged[m0] > 0)
+    )
+
+    df_merged['最新營收月增率(%)'] = (((df_merged[m0] - df_merged[m1]) / df_merged[m1].replace(0, float('nan'))) * 100).round(2).fillna(0.0)
+    cond_surge_1_5x = (df_merged[m1] > 0) & (df_merged[m0] >= df_merged[m1] * 1.5)
+
+    df_merged['營收連3月月增'] = cond_growth_3m
+    df_merged['營收連2月月增'] = cond_growth_2m
+    df_merged['營收爆發1.5倍'] = cond_surge_1_5x
+
+    return df_merged[["股票代號", "營收連3月月增", "營收連2月月增", "最新營收月增率(%)", "營收爆發1.5倍"]]
 
 def get_revenue_analysis() -> pd.DataFrame:
     today = datetime.date.today()

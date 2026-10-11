@@ -401,140 +401,6 @@ def get_foreign_holdings() -> pd.DataFrame:
 
     return pd.DataFrame(columns=["股票代號", "外資持股比例(%)", "發行總張數"])
 
-# ==========================================
-# 【官方 OpenAPI 營收抓取與詳細 Log 除錯機制】
-# ==========================================
-def fetch_official_revenue(year: int, month: int) -> pd.DataFrame:
-    cache_file = os.path.join(CACHE_DIR, f"official_rev_{year}_{month:02d}.csv")
-    if is_valid_cache(cache_file, min_size=50):
-        return pd.read_csv(cache_file, dtype={"股票代號": str})
-
-    print(f"\n🌐 透過證交所與櫃買官方 OpenAPI 抓取 [{year}/{month:02d}] 月營收資料...")
-    year_roc = year - 1911
-    target_period = f"{year_roc}{month:02d}"  # 例如民國115年8月為 "11508"
-    
-    urls = [
-        ("上市公司 (TWSE)", "https://openapi.twse.com.tw/v1/opendata/t187ap05_L"),
-        ("上櫃公司 (TPEx)", "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap05_O")
-    ]
-    
-    rows = {}
-    for market_name, url in urls:
-        print(f"👉 正在請求 {market_name} 網址: {url}")
-        try:
-            resp = requests.get(url, headers=OPENAPI_HEADERS, timeout=15)
-            print(f"   [HTTP 狀態碼]: {resp.status_code}")
-            
-            if resp.status_code == 200:
-                data = resp.json()
-                if isinstance(data, list) and len(data) > 0:
-                    print(f"   [JSON 筆數]: {len(data)} 筆")
-                    # 印出第一筆資料的「資料年月」與「公司代號」樣本，供 Log 比對
-                    sample_item = data[0]
-                    print(f"   [第一筆樣本]: 公司代號={sample_item.get('公司代號')}, 資料年月={sample_item.get('資料年月')}")
-                    
-                    matched_count = 0
-                    for item in data:
-                        code = str(item.get("公司代號", "")).strip()
-                        period = str(item.get("資料年月", "")).strip()
-                        rev_val = item.get("營業收入-當月營收", 0)
-                        
-                        period_clean = period.replace("/", "").replace("-", "").strip()
-                        
-                        if period_clean == target_period and len(code) == 4 and code.isdigit():
-                            rev = to_float(rev_val) / 1000.0  # 轉換為千元
-                            if rev > 0:
-                                rows[code] = rev
-                                matched_count += 1
-                    print(f"   [本網址符合 {target_period} 筆數]: {matched_count} 筆")
-                else:
-                    print(f"   ⚠ {market_name} 回傳的 JSON 格式不是清單或內容為空。")
-            else:
-                print(f"   ⚠ 請求失敗，狀態碼: {resp.status_code}")
-        except Exception as e:
-            print(f"   ⚠ 抓取官方 OpenAPI 發生例外錯誤 ({url}): {e}")
-
-    col_name = f"營收_{year_roc}_{month:02d}"
-    if rows:
-        df_res = pd.DataFrame({"股票代號": list(rows.keys()), col_name: list(rows.values())})
-        print(f"🔍 官方 OpenAPI [{year}/{month:02d}] 總計成功解析筆數: {len(df_res)}")
-        df_res.to_csv(cache_file, index=False, encoding="utf-8-sig")
-        return df_res
-
-    print(f"⚠ 官方 OpenAPI [{year}/{month:02d}] 無有效資料（可能該月份尚未發布或不在即時 API 範圍內）")
-    return pd.DataFrame(columns=["股票代號", col_name])
-
-def get_revenue_analysis() -> pd.DataFrame:
-    today = datetime.date.today()
-    cur_year = today.year
-    cur_month = today.month
-    day = today.day
-
-    target_months = []
-    if day < 10:
-        d_ref = today.replace(day=1) - datetime.timedelta(days=1)
-        for i in range(3):
-            m = d_ref.month - i
-            y = d_ref.year
-            while m <= 0:
-                m += 12
-                y -= 1
-            target_months.append((y, m))
-    else:
-        d_ref = today.replace(day=1) - datetime.timedelta(days=1)
-        for i in range(3):
-            m = d_ref.month - i
-            y = d_ref.year
-            while m <= 0:
-                m += 12
-                y -= 1
-            target_months.append((y, m))
-
-    target_months = list(reversed(target_months))
-    print(f"📊 檢查官方營收區間: {[f'{y}/{m:02d}' for y, m in target_months]}...")
-
-    df_merged = None
-    rev_cols = []
-    for y, m in target_months:
-        df_m = fetch_official_revenue(y, m)
-        col_name = f"營收_{y-1911}_{m:02d}"
-        rev_cols.append(col_name)
-        if df_merged is None:
-            df_merged = df_m
-        else:
-            if not df_m.empty:
-                df_merged = pd.merge(df_merged, df_m, on="股票代號", how="outer")
-
-    if df_merged is None or len(rev_cols) < 3:
-        return pd.DataFrame(columns=["股票代號", "營收連3月月增", "營收連2月月增", "最新營收月增率(%)", "營收爆發1.5倍"])
-
-    m2, m1, m0 = rev_cols[-3], rev_cols[-2], rev_cols[-1]
-
-    for c in [m2, m1, m0]:
-        if c not in df_merged.columns:
-            df_merged[c] = 0.0
-        df_merged[c] = pd.to_numeric(df_merged[c], errors="coerce").fillna(0)
-
-    cond_growth_3m = (
-        (df_merged[m0] > df_merged[m1]) &
-        (df_merged[m1] > df_merged[m2]) &
-        (df_merged[m0] > 0)
-    )
-
-    cond_growth_2m = (
-        (df_merged[m0] > df_merged[m1]) &
-        (df_merged[m0] > 0)
-    )
-
-    df_merged['最新營收月增率(%)'] = (((df_merged[m0] - df_merged[m1]) / df_merged[m1].replace(0, float('nan'))) * 100).round(2).fillna(0.0)
-    cond_surge_1_5x = (df_merged[m1] > 0) & (df_merged[m0] >= df_merged[m1] * 1.5)
-
-    df_merged['營收連3月月增'] = cond_growth_3m
-    df_merged['營收連2月月增'] = cond_growth_2m
-    df_merged['營收爆發1.5倍'] = cond_surge_1_5x
-
-    return df_merged[["股票代號", "營收連3月月增", "營收連2月月增", "最新營收月增率(%)", "營收爆發1.5倍"]]
-
 def get_last_n_trading_days_data(n_market=155, n_inst=60):
     valid_dfs = []
     valid_inst = []
@@ -596,7 +462,6 @@ def main():
 
     df_tdcc = get_tdcc_data()
     df_holdings = get_foreign_holdings()
-    df_revenue = get_revenue_analysis()
 
     df_0_merge = df_0.copy()
     df_0_merge.columns = [f"{c}_0" if c not in ["市場", "股票代號", "股票名稱"] else c for c in df_0_merge.columns]
@@ -789,18 +654,6 @@ def main():
     else:
         df_merge['外資近月買超佔持股(%)'] = 0.0
 
-    if not df_revenue.empty:
-        df_merge = pd.merge(df_merge, df_revenue, on='股票代號', how='left')
-        df_merge['營收連3月月增'] = df_merge['營收連3月月增'].fillna(False).astype(bool)
-        df_merge['營收連2月月增'] = df_merge['營收連2月月增'].fillna(False).astype(bool)
-        df_merge['最新營收月增率(%)'] = df_merge['最新營收月增率(%)'].fillna(0.0)
-        df_merge['營收爆發1.5倍'] = df_merge['營收爆發1.5倍'].fillna(False).astype(bool)
-    else:
-        df_merge['營收連3月月增'] = False
-        df_merge['營收連2月月增'] = False
-        df_merge['最新營收月增率(%)'] = 0.0
-        df_merge['營收爆發1.5倍'] = False
-
     d0_s = f"{date_0[4:6]}/{date_0[6:]}"
     d1_s = f"{date_1[4:6]}/{date_1[6:]}"
     d2_s = f"{date_2[4:6]}/{date_2[6:]}"
@@ -943,7 +796,7 @@ def main():
 
     def apply_color_formatting(df_in):
         df_out = df_in.copy()
-        for col_name in ["最新漲幅(%)", "前一日漲幅(%)", "近10日漲幅(%)", "最新營收月增率(%)"]:
+        for col_name in ["最新漲幅(%)", "前一日漲幅(%)", "近10日漲幅(%)"]:
             if col_name in df_out.columns:
                 df_out[col_name] = df_out[col_name].apply(color_pct)
         return df_out
@@ -1071,15 +924,6 @@ def main():
         max_120 = df_merge[close_120].max(axis=1)
         return (df_merge[f'收盤價_{k}'] > 0) & (max_120 > 0) & (df_merge[f'收盤價_{k}'] > max_120)
 
-    def cond18_fn(k):
-        return df_merge['營收連3月月增'] & (df_merge[f'收盤價_{k}'] > 0)
-
-    def cond18_2m_fn(k):
-        return df_merge['營收連2月月增'] & (df_merge[f'收盤價_{k}'] > 0)
-
-    def cond19_fn(k):
-        return df_merge['營收爆發1.5倍'] & (df_merge[f'收盤價_{k}'] > 0)
-
     def cond20_fn(k):
         f_more = (df_merge[f'外資_{k}'] > df_merge[f'外資_{k+1}']) & \
                  (df_merge[f'外資_{k+1}'] > df_merge[f'外資_{k+2}']) & \
@@ -1205,19 +1049,14 @@ def main():
     res15_strict = res15[(res15['創60日最大量']) & (res15['60日震幅(%)'] <= 10.0)]
     res16, html_tb16 = build_res(cond16_fn, ["最新漲幅(%)", "增量倍數"], [False, False], std_rename, ["最大量日最高價", "增量倍數"])
     res17, html_tb17 = build_res(cond17_fn, ["最新漲幅(%)", "增量倍數"], [False, False], std_rename, ["120日最高收盤", "增量倍數"])
-    
-    # 策略 18 (連3月)、18B (連2月)、19 (暴增1.5倍)
-    res18, html_tb18 = build_res(cond18_fn, ["最新營收月增率(%)", "最新漲幅(%)"], [False, False], std_rename, ["最新營收月增率(%)", "增量倍數"])
-    res18_2m, html_tb18_2m = build_res(cond18_2m_fn, ["最新營收月增率(%)", "最新漲幅(%)"], [False, False], std_rename, ["最新營收月增率(%)", "增量倍數"])
-    res19, html_tb19 = build_res(cond19_fn, ["最新營收月增率(%)", "最新漲幅(%)"], [False, False], std_rename, ["最新營收月增率(%)", "增量倍數"])
 
     res20, html_tb20 = build_res(cond20_fn, ["外資_0", "最新漲幅(%)"], [False, False], {**std_rename, "外資_0": "最新日外資(張)", "外資_1": "前1日外資(張)", "外資_2": "前2日外資(張)"}, ["最新日外資(張)", "前1日外資(張)", "前2日外資(張)", "增量倍數"])
     res22, html_tb22 = build_res(cond22_fn, ["最新漲幅(%)", "增量倍數"], [False, False], std_rename)
     res23, html_tb23 = build_res(cond23_fn, ["最新漲幅(%)", "增量倍數"], [False, False], std_rename, ["近10日最大量日最高價", "增量倍數"])
     res24, html_tb24 = build_res(cond24_fn, ["最新漲幅(%)", "增量倍數"], [False, False], std_rename, ["千張大戶比例(%)", "增量倍數"])
     res25, html_tb25 = build_res(cond25_fn, ["千張大戶比例(%)", "最新漲幅(%)"], [False, False], std_rename, ["千張大戶比例(%)", "增量倍數"])
-    res32, html_tb32 = build_res(cond32_fn, ["法人3日集中度(%)", "最新漲幅(%)"], [False, False], inst_rename, ["千張大戶比例(%)", "最新營收月增率(%)", "法人1日集中度(%)", "法人2日集中度(%)", "法人3日集中度(%)", "外資(T)", "外資(T-1)", "外資(T-2)", "投信(T)", "投信(T-1)", "投信(T-2)"])
-    res33, html_tb33 = build_res(cond33_fn, ["千張大戶比例(%)", "最新漲幅(%)"], [False, False], std_rename, ["千張大戶比例(%)", "最新營收月增率(%)", "120日最高收盤"])
+    res32, html_tb32 = build_res(cond32_fn, ["法人3日集中度(%)", "最新漲幅(%)"], [False, False], inst_rename, ["千張大戶比例(%)", "法人1日集中度(%)", "法人2日集中度(%)", "法人3日集中度(%)", "外資(T)", "外資(T-1)", "外資(T-2)", "投信(T)", "投信(T-1)", "投信(T-2)"])
+    res33, html_tb33 = build_res(cond33_fn, ["千張大戶比例(%)", "最新漲幅(%)"], [False, False], std_rename, ["千張大戶比例(%)", "120日最高收盤"])
 
     # 策略 26: 9 月三策略組合挖掘回測
     print("🔬 啟動策略 26：9 月三策略組合高勝率回測...")
@@ -1362,8 +1201,7 @@ def main():
         ("7.20日高不賣", cond7_fn), ("8.連日墊高", cond8_fn), ("9.多重濾網", cond9_fn),
         ("10.上櫃強勢", cond10_fn), ("11.上櫃紅K", cond11_fn), ("13.逼近60日高", cond13_fn),
         ("14.創20日高不賣", cond14_fn), ("15.壓縮突破60日", cond15_fn), ("16.最大量高點", cond16_fn),
-        ("17.創120日高", cond17_fn), ("18.營收連3增啟動", cond18_fn), ("19.營收暴增1.5倍", cond19_fn),
-        ("20.外資越買越多出量", cond20_fn), ("22.高勝率基因複合", cond22_fn), ("23.突破10日最大量", cond23_fn),
+        ("17.創120日高", cond17_fn), ("20.外資越買越多出量", cond20_fn), ("22.高勝率基因複合", cond22_fn), ("23.突破10日最大量", cond23_fn),
         ("24.飆股基因起漲", cond24_fn), ("25.倚強科模式複製", cond25_fn), ("32.大戶鎖碼法人集中", cond32_backtest_fn),
         ("33.絕對鎖碼突破", cond33_fn)
     ]
@@ -1409,7 +1247,6 @@ def main():
         ("10.上櫃強勢", res10), ("11.上櫃實體紅K", res11), ("13.逼近60日高", res13),
         ("14.創20日高+法人七日不賣", res14), ("15.壓縮突破60日", res15_strict),
         ("16.突破最大量高點", res16), ("17.創120日高", res17),
-        ("18.營收連3增啟動", res18), ("19.營收暴增1.5倍", res19),
         ("20.外資越買越多出量", res20), ("22.高勝率基因複合", res22),
         ("23.突破10日最大量", res23), ("24.飆股基因起漲", res24),
         ("25.倚強科模式複製", res25), ("32.大戶鎖碼法人集中", res32),
@@ -1822,7 +1659,6 @@ def main():
             <button class="tab-btn" onclick="openStrategy(event, 'Tab_MaxVol')">🔥 天量突破</button>
             <button class="tab-btn" onclick="openStrategy(event, 'Tab_StepGap')">📈 墊高跳空</button>
             <button class="tab-btn" onclick="openStrategy(event, 'Tab_Whale')">👑 主力鎖碼</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Tab_Revenue')">💎 營收動能</button>
             <button class="tab-btn" onclick="openStrategy(event, 'Tab_Inst')">🚀 法人動能</button>
             <button class="tab-btn" onclick="openStrategy(event, 'Tab_OTC')">🎯 上櫃強勢</button>
             <button class="tab-btn" onclick="openStrategy(event, 'Tab_Backtest')">📊 量化回測總覽</button>
@@ -2030,32 +1866,7 @@ def main():
                 </div>
             </div>
 
-            <!-- 7. 營收動能 -->
-            <div id="Tab_Revenue" class="tabcontent">
-                <div class="module-nav-box">
-                    <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇營收成長條件：</span>
-                    <select class="custom-select" id="sel_Rev_Mode" onchange="switchRevenueSubTab(this.value)">
-                        <option value="rev_2m" selected>18. 連續 2 個月營收月增 (MoM)</option>
-                        <option value="rev_3m">18B. 連續 3 個月營收月增 (MoM)</option>
-                        <option value="rev_15x">19. 最新月營收暴增 1.5 倍以上</option>
-                    </select>
-                </div>
-                
-                <div id="rev_2m" class="rev-sub-content" style="display:block;">
-                    <div class="info-box"><p>🎯 連續兩個月營收月增 (MoM) 強勢成長標的。</p><div class="count-badge">符合：{len(res18_2m)} 檔</div></div>
-                    <div class="table-container">{html_tb18_2m}</div>
-                </div>
-                <div id="rev_3m" class="rev-sub-content" style="display:none;">
-                    <div class="info-box"><p>🎯 連續三個月營收月增 (MoM) 穩定成長標的。</p><div class="count-badge">符合：{len(res18)} 檔</div></div>
-                    <div class="table-container">{html_tb18}</div>
-                </div>
-                <div id="rev_15x" class="rev-sub-content" style="display:none;">
-                    <div class="info-box"><p>🎯 最新月營收為前月 1.5 倍以上 (月增率 &ge; 50%) 爆發標的。</p><div class="count-badge">符合：{len(res19)} 檔</div></div>
-                    <div class="table-container">{html_tb19}</div>
-                </div>
-            </div>
-
-            <!-- 8. 法人動能 -->
+            <!-- 7. 法人動能 -->
             <div id="Tab_Inst" class="tabcontent">
                 <div class="module-nav-box">
                     <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇法人籌碼行為：</span>
@@ -2079,7 +1890,7 @@ def main():
                 </div>
             </div>
 
-            <!-- 9. 上櫃強勢 -->
+            <!-- 8. 上櫃強勢 -->
             <div id="Tab_OTC" class="tabcontent">
                 <div class="module-nav-box">
                     <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇上櫃強勢型態：</span>
@@ -2098,7 +1909,7 @@ def main():
                 </div>
             </div>
 
-            <!-- 10. 量化回測總覽 -->
+            <!-- 9. 量化回測總覽 -->
             <div id="Tab_Backtest" class="tabcontent">
                 <div class="module-nav-box">
                     <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇回測研究模組：</span>
@@ -2220,14 +2031,6 @@ def main():
                 }}
             }}
 
-            function switchRevenueSubTab(targetId) {{
-                const parent = document.getElementById('Tab_Revenue');
-                if (!parent) return;
-                parent.querySelectorAll('.rev-sub-content').forEach(el => el.style.display = 'none');
-                const target = parent.querySelector('#' + targetId);
-                if (target) target.style.display = 'block';
-            }}
-
             function filterStrat32() {{
                 let days = parseInt(document.getElementById('sel_Strat32_days').value);
                 let minRatio = parseFloat(document.getElementById('sel_Strat32_ratio').value);
@@ -2346,7 +2149,7 @@ def main():
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(html_content)
 
-    print(f"\n✅ 營收動能模組已完美重構！檔案已生成: {html_filename}")
+    print(f"\n✅ 營收相關策略已完全移除！檔案已生成: {html_filename}")
     if os.environ.get("GITHUB_ACTIONS") != "true":
         webbrowser.open(f"file:///{file_path}")
 

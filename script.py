@@ -401,59 +401,74 @@ def get_foreign_holdings() -> pd.DataFrame:
 
     return pd.DataFrame(columns=["股票代號", "外資持股比例(%)", "發行總張數"])
 
-def fetch_month_revenue(year_roc: int, month: int) -> pd.DataFrame:
-    cache_file = os.path.join(CACHE_DIR, f"rev_{year_roc}_{month:02d}.csv")
-    df_cached = safe_read_csv(cache_file, dtype={"股票代號": str})
-    if not df_cached.empty:
-        return df_cached
+# ==========================================
+# 【FinMind API 整合營收抓取與智慧快取機制】
+# ==========================================
+def fetch_finmind_revenue(year: int, month: int) -> pd.DataFrame:
+    cache_file = os.path.join(CACHE_DIR, f"finmind_rev_{year}_{month:02d}.csv")
+    if is_valid_cache(cache_file, min_size=50):
+        return pd.read_csv(cache_file, dtype={"股票代號": str})
 
-    col_name = f"營收_{year_roc}_{month:02d}"
-    rows = {}
-    for market in ["sii", "otc"]:
-        url = f"https://mops.twse.com.tw/nas/t21/{market}/t21sc03_{year_roc}_{month}_0.html"
-        try:
-            resp = requests.get(url, headers=OPENAPI_HEADERS, timeout=10)
-            if resp.status_code != 200:
-                continue
-            html = resp.content.decode("big5", errors="ignore")
-            tables = pd.read_html(StringIO(html))
-        except Exception:
-            continue
-        for t in tables:
-            if t.shape[1] < 11:
-                continue
-            for r in t.itertuples(index=False):
-                code = str(r[0]).strip()
-                if code.isdigit() and len(code) == 4:
-                    rows[code] = to_float(r[2])
+    print(f"🌐 透過 FinMind API 抓取 [{year}/{month:02d}] 營收資料...")
+    start_date = f"{year}-{month:02d}-01"
+    if month == 12:
+        end_date = f"{year+1}-01-01"
+    else:
+        end_date = f"{year}-{month+1:02d}-01"
+
+    url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockMonthRevenue&start_date={start_date}&end_date={end_date}"
+    data = safe_request_json(url, headers=OPENAPI_HEADERS)
+    
+    rows = []
+    if isinstance(data, dict) and data.get("data"):
+        for item in data["data"]:
+            stock_id = str(item.get("stock_id", "")).strip()
+            if len(stock_id) == 4 and stock_id.isdigit():
+                rev = to_float(item.get("revenue", 0)) / 1000.0  # 轉換為千元單位以保持一致
+                rows.append({"股票代號": stock_id, f"營收_{year-1911}_{month:02d}": rev})
 
     if rows:
-        df_res = pd.DataFrame({"股票代號": list(rows.keys()), col_name: list(rows.values())})
+        df_res = pd.DataFrame(rows).drop_duplicates(subset=["股票代號"])
         df_res.to_csv(cache_file, index=False, encoding="utf-8-sig")
         return df_res
-
-    return pd.DataFrame(columns=["股票代號", col_name])
+    
+    return pd.DataFrame(columns=["股票代號", f"營收_{year-1911}_{month:02d}"])
 
 def get_revenue_analysis() -> pd.DataFrame:
     today = datetime.date.today()
-    cur_year = today.year - 1911
+    cur_year = today.year
     cur_month = today.month
+    day = today.day
 
-    months = []
-    start_offset = 2 if today.day < 10 else 1
-    for i in range(start_offset, start_offset + 5):
-        m = cur_month - i
-        y = cur_year
-        while m <= 0:
-            m += 12
-            y -= 1
-        months.append((y, m))
+    # 智慧判斷邏輯：
+    # 每個月 10 號以前，除了當月尚未完整出爐外，需要檢查當月及前一個月
+    # 每個月 10 號以後，當月及前一個月已經完全出爐，不再重複打 API 抓取當月
+    target_months = []
+    if day < 10:
+        # 10號以前：抓取前兩個月與大前個月
+        d_target = today.replace(day=1) - datetime.timedelta(days=1) # 上個月
+        target_months.append((d_target.year, d_target.month))
+        d_target2 = d_target.replace(day=1) - datetime.timedelta(days=1) # 上上個月
+        target_months.append((d_target2.year, d_target2.month))
+        d_target3 = d_target2.replace(day=1) - datetime.timedelta(days=1) # 大前個月
+        target_months.append((d_target3.year, d_target3.month))
+    else:
+        # 10號以後：使用已快取的完整月份
+        d_target = today.replace(day=1) - datetime.timedelta(days=1)
+        target_months.append((d_target.year, d_target.month))
+        d_target2 = d_target.replace(day=1) - datetime.timedelta(days=1)
+        target_months.append((d_target2.year, d_target2.month))
+        d_target3 = d_target2.replace(day=1) - datetime.timedelta(days=1)
+        target_months.append((d_target3.year, d_target3.month))
+
+    target_months = list(reversed(target_months)) # 按時間舊到新排序
+    print(f"📊 檢查 FinMind 營收區間: {[f'{y}/{m:02d}' for y, m in target_months]}...")
 
     df_merged = None
     rev_cols = []
-    for y, m in months:
-        df_m = fetch_month_revenue(y, m)
-        col_name = f"營收_{y}_{m:02d}"
+    for y, m in target_months:
+        df_m = fetch_finmind_revenue(y, m)
+        col_name = f"營收_{y-1911}_{m:02d}"
         rev_cols.append(col_name)
         if df_merged is None:
             df_merged = df_m
@@ -464,15 +479,13 @@ def get_revenue_analysis() -> pd.DataFrame:
     if df_merged is None or len(rev_cols) < 3:
         return pd.DataFrame(columns=["股票代號", "營收連3月月增", "營收連2月月增", "最新營收月增率(%)", "營收爆發1.5倍"])
 
-    rev_cols_sorted = list(reversed(rev_cols))
-    m2, m1, m0 = rev_cols_sorted[-3], rev_cols_sorted[-2], rev_cols_sorted[-1]
+    m2, m1, m0 = rev_cols[-3], rev_cols[-2], rev_cols[-1]
 
     for c in [m2, m1, m0]:
         if c not in df_merged.columns:
             df_merged[c] = 0.0
         df_merged[c] = pd.to_numeric(df_merged[c], errors="coerce").fillna(0)
 
-    # 確保只要有數據且 m0 > m1 即可（不強制要求絕對大於 0，避免部分特殊產業歸零）
     cond_growth_3m = (
         (df_merged[m0] > df_merged[m1]) &
         (df_merged[m1] > df_merged[m2]) &
@@ -1320,7 +1333,7 @@ def main():
         ("7.20日高不賣", cond7_fn), ("8.連日墊高", cond8_fn), ("9.多重濾網", cond9_fn),
         ("10.上櫃強勢", cond10_fn), ("11.上櫃紅K", cond11_fn), ("13.逼近60日高", cond13_fn),
         ("14.創20日高不賣", cond14_fn), ("15.壓縮突破60日", cond15_fn), ("16.最大量高點", cond16_fn),
-        ("17.創120日高", cond17_fn), ("18.營收連三增啟動", cond18_fn), ("19.營收暴增1.5倍", cond19_fn),
+        ("17.創120日高", cond17_fn), ("18.營收連3增啟動", cond18_fn), ("19.營收暴增1.5倍", cond19_fn),
         ("20.外資越買越多出量", cond20_fn), ("22.高勝率基因複合", cond22_fn), ("23.突破10日最大量", cond23_fn),
         ("24.飆股基因起漲", cond24_fn), ("25.倚強科模式複製", cond25_fn), ("32.大戶鎖碼法人集中", cond32_backtest_fn),
         ("33.絕對鎖碼突破", cond33_fn)
@@ -1988,7 +2001,7 @@ def main():
                 </div>
             </div>
 
-            <!-- 7. 營收動能 (完美修正：直接以子區塊完整渲染，確保選單切換不為 0 檔) -->
+            <!-- 7. 營收動能 -->
             <div id="Tab_Revenue" class="tabcontent">
                 <div class="module-nav-box">
                     <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇營收成長條件：</span>

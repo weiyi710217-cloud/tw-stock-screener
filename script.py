@@ -1008,6 +1008,28 @@ def main():
         near_breakout = (c_k >= max_120_k * 0.95) & (c_k <= max_120_k * 1.05) & (max_120_k > 0)
         return whale_70 & bullish_ma & near_breakout
 
+    def cond_new_high_pullback(k):
+        try:
+            close_cols_180 = [f'收盤價_{k+j}' for j in range(1, 181) if f'收盤價_{k+j}' in df_merge.columns]
+            if len(close_cols_180) < 60:
+                return pd.Series(False, index=df_merge.index)
+            max_180 = df_merge[close_cols_180].max(axis=1)
+            
+            close_cols_20 = [f'收盤價_{k+j}' for j in range(0, 20) if f'收盤價_{k+j}' in df_merge.columns]
+            max_20 = df_merge[close_cols_20].max(axis=1)
+            ever_hit_high = (max_20 >= max_180 * 0.99) & (max_180 > 0)
+            
+            low_cols_20 = [f'最低價_{k+j}' for j in range(0, 20) if f'最低價_{k+j}' in df_merge.columns]
+            min_low_20 = df_merge[low_cols_20].min(axis=1)
+            had_pullback = min_low_20 <= max_180 * 0.92
+            
+            c_k = df_merge[f'收盤價_{k}']
+            near_high_now = (c_k >= max_180 * 0.95) & (c_k <= max_180 * 1.05)
+            
+            return ever_hit_high & had_pullback & near_high_now
+        except Exception:
+            return pd.Series(False, index=df_merge.index)
+
     def build_res(cond_fn, sort_cols, asc_list, rename_dict=None, extra_cols=None):
         cond = cond_fn(0)
         res = df_merge[cond].copy()
@@ -1057,6 +1079,7 @@ def main():
     res25, html_tb25 = build_res(cond25_fn, ["千張大戶比例(%)", "最新漲幅(%)"], [False, False], std_rename, ["千張大戶比例(%)", "增量倍數"])
     res32, html_tb32 = build_res(cond32_fn, ["法人3日集中度(%)", "最新漲幅(%)"], [False, False], inst_rename, ["千張大戶比例(%)", "法人1日集中度(%)", "法人2日集中度(%)", "法人3日集中度(%)", "外資(T)", "外資(T-1)", "外資(T-2)", "投信(T)", "投信(T-1)", "投信(T-2)"])
     res33, html_tb33 = build_res(cond33_fn, ["千張大戶比例(%)", "最新漲幅(%)"], [False, False], std_rename, ["千張大戶比例(%)", "120日最高收盤"])
+    res34, html_tb34 = build_res(cond_new_high_pullback, ["最新漲幅(%)", "增量倍數"], [False, False], std_rename, ["120日最高收盤", "增量倍數"])
 
     # 策略 26: 9 月【任兩策略組合】高勝率回測挖掘
     print("🔬 啟動策略 26：9 月任意兩策略組合高勝率回測挖掘...")
@@ -1068,7 +1091,8 @@ def main():
         ("14.創20日高不賣", cond14_fn), ("15.壓縮突破60日", cond15_fn), ("16.最大量高點", cond16_fn),
         ("17.創120日高", cond17_fn), ("20.外資越買越多出量", cond20_fn),
         ("22.高勝率基因複合", cond22_fn), ("23.突破10日最大量", cond23_fn),
-        ("32.大戶鎖碼法人集中", cond32_backtest_fn), ("33.絕對鎖碼突破", cond33_fn)
+        ("32.大戶鎖碼法人集中", cond32_backtest_fn), ("33.絕對鎖碼突破", cond33_fn),
+        ("34.創新高回檔再攻", cond_new_high_pullback)
     ]
 
     sept_indices = [i for i, (d, _) in enumerate(days_data) if "20260901" <= d <= "20260930"]
@@ -1105,7 +1129,6 @@ def main():
     returns_arr = np.zeros(N, dtype=float)
     returns_arr[valid_ret_mask] = ((close_1008[valid_ret_mask] - open_1001[valid_ret_mask]) / open_1001[valid_ret_mask]) * 100
 
-    # 改為任兩策略組合 (Combinations of 2)
     combo_pairs = list(itertools.combinations(cand_strategies, 2))
     combo_records = []
 
@@ -1150,7 +1173,7 @@ def main():
     df_combos_show["中位數漲幅(%)"] = df_combos_show["中位數漲幅(%)"].apply(color_pct)
     html_tb26 = df_combos_show.to_html(index=False, classes="styled-table backtest-table sortable-table", escape=False)
 
-    # 建立策略 27~31 (對應前五名兩策略組合)
+    # 建立策略 27~31
     top5_combos = df_combos.head(5).to_dict("records")
     strat_results_27_31 = {}
     rank_labels = ["首選", "第二", "第三", "第四", "第五"]
@@ -1204,7 +1227,7 @@ def main():
         ("14.創20日高不賣", cond14_fn), ("15.壓縮突破60日", cond15_fn), ("16.最大量高點", cond16_fn),
         ("17.創120日高", cond17_fn), ("20.外資越買越多出量", cond20_fn), ("22.高勝率基因複合", cond22_fn), ("23.突破10日最大量", cond23_fn),
         ("24.飆股基因起漲", cond24_fn), ("25.倚強科模式複製", cond25_fn), ("32.大戶鎖碼法人集中", cond32_backtest_fn),
-        ("33.絕對鎖碼突破", cond33_fn)
+        ("33.絕對鎖碼突破", cond33_fn), ("34.創新高回檔再攻", cond_new_high_pullback)
     ]
 
     backtest_records = []
@@ -1251,7 +1274,7 @@ def main():
         ("20.外資越買越多出量", res20), ("22.高勝率基因複合", res22),
         ("23.突破10日最大量", res23), ("24.飆股基因起漲", res24),
         ("25.倚強科模式複製", res25), ("32.大戶鎖碼法人集中", res32),
-        ("33.絕對鎖碼突破", res33),
+        ("33.絕對鎖碼突破", res33), ("34.創新高回檔再攻", res34),
         ("27.組合首選", strat_results_27_31[27]["df"]),
         ("28.組合第二", strat_results_27_31[28]["df"]),
         ("29.組合第三", strat_results_27_31[29]["df"]),
@@ -1309,6 +1332,7 @@ def main():
         ("Tab_Strat20", "🚀 外資連三日買超且越買越多", "【外資連買加速】外資連續 3 天買超且每日買超張數遞增（越買越多） ＋ 當日成交量放大 1.2 倍 ＋ 股價收紅。", len(res20), html_tb20),
         ("Tab_Strat3", "🚀 投信不賣 ＋ 外資連買", "【法人聯手】最新日成交量放大 ＋ 投信連續 7 天無賣超 ＋ 外資當日買超（投信鎖碼、外資助攻）。", len(res3), html_tb3),
         ("Tab_Strat11", "🎯 上櫃實體紅 K 強勢股", "【中小型強勢】限定上櫃（OTC）股票 ＋ 當日收盤價大於開盤價（實體紅K棒）且帶有強勢表現。", len(res11), html_tb11),
+        ("Tab_Strat34", "🚀 創新高回檔再攻", "【回檔再攻】過去 20 天曾創 180 天新高 ＋ 曾回檔修正 ＋ 最近一週重回新高上下 5% 區間。", len(res34), html_tb34),
         ("Tab_Backtest26", "📊 9月任兩策略組合挖掘", "【量化回測總覽】回測 9 月份任兩策略同時命中之個股，以 10/1 開盤至 10/8 收盤計算實際績效與勝率排行。", len(df_combos), html_tb26),
         ("Tab_Backtest21", "📊 過去30天單策略勝率", "【量化回測總覽】統計各策略在過去 30 個交易日內選出個股的「隔日收盤收紅（上漲）」歷史勝率與平均報酬。", len(df_strat21), html_tb21)
     ]
@@ -1343,7 +1367,6 @@ def main():
         </div>
         """
 
-        # 針對每一個策略明細頁面，加裝外資、投信、千張大戶即時篩選工具列
         filter_toolbar = f"""
         <div class="filter-toolbar">
             <div class="filter-group">
@@ -1912,7 +1935,6 @@ def main():
                 input.value = '';
             }}
 
-            // 即時篩選功能（支援外資、投信、千張大戶交叉篩選）
             function filterTableRows(pageId, selectElem, filterType) {{
                 const page = document.getElementById(pageId);
                 if(!page) return;
@@ -2071,9 +2093,9 @@ def main():
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(html_content)
 
-    print(f"\n✅ 任兩策略組合回測與即時篩選器已全數更新完成！網頁已生成: {html_filename}")
+    print(f"\n✅ 策略 34（創新高回檔再攻）與任兩策略組合回測已完美生成: {html_filename}")
     if os.environ.get("GITHUB_ACTIONS") != "true":
         webbrowser.open(f"file:///{file_path}")
 
 if __name__ == "__main__":
-    main() 
+    main()

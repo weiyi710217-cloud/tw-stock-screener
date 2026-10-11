@@ -1342,6 +1342,39 @@ def main():
         </div>
         """
 
+        # 針對每一個策略明細頁面，加上即時篩選工具列（外資、投信、千張大戶篩選）
+        filter_toolbar = f"""
+        <div class="filter-toolbar">
+            <div class="filter-group">
+                <label>外資7日買賣超：</label>
+                <select class="custom-select" onchange="filterTableRows('{tab_id}', this, 'foreign')">
+                    <option value="all" selected>全部顯示</option>
+                    <option value="ge0">大於等於 0 張</option>
+                    <option value="ge100">大於 100 張</option>
+                    <option value="ge500">大於 500 張</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>投信7日買賣超：</label>
+                <select class="custom-select" onchange="filterTableRows('{tab_id}', this, 'trust')">
+                    <option value="all" selected>全部顯示</option>
+                    <option value="ge0">大於等於 0 張</option>
+                    <option value="ge50">大於 50 張</option>
+                    <option value="ge200">大於 200 張</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>千張大戶比例：</label>
+                <select class="custom-select" onchange="filterTableRows('{tab_id}', this, 'whale')">
+                    <option value="all" selected>全部顯示</option>
+                    <option value="ge35">大於等於 35%</option>
+                    <option value="ge50">大於等於 50%</option>
+                    <option value="ge70">大於等於 70%</option>
+                </select>
+            </div>
+        </div>
+        """ if "Backtest" not in tab_id else ""
+
         pages_html_blocks += f"""
         <div id="{tab_id}" class="page-view" style="display:none;">
             <div class="sub-header">
@@ -1350,8 +1383,9 @@ def main():
             </div>
             <div class="info-box">
                 <p>🎯 <b>詳細選股與量化條件：</b> {desc}</p>
-                <div class="count-badge">符合：{count} 檔</div>
+                <div class="count-badge">符合：<span id="count_{tab_id}">{count}</span> 檔</div>
             </div>
+            {filter_toolbar}
             <div class="table-container">{tbl_html}</div>
         </div>
         """
@@ -1492,6 +1526,38 @@ def main():
                 margin: 0;
                 font-size: 15px;
                 color: var(--primary);
+            }}
+
+            .filter-toolbar {{
+                background: white;
+                border: 1px solid var(--border);
+                padding: 8px 12px;
+                border-radius: 8px;
+                margin-bottom: 8px;
+                display: flex;
+                flex-wrap: wrap;
+                gap: 10px;
+                align-items: center;
+                font-size: 11px;
+            }}
+            .filter-group {{
+                display: flex;
+                align-items: center;
+                gap: 4px;
+            }}
+            .filter-group label {{
+                font-weight: 600;
+                color: var(--text-muted);
+            }}
+            .custom-select {{
+                padding: 4px 8px;
+                font-size: 11px;
+                font-weight: 600;
+                border-radius: 6px;
+                border: 1px solid #cbd5e1;
+                background-color: white;
+                color: var(--text);
+                outline: none;
             }}
 
             .add-stock-box {{
@@ -1739,7 +1805,7 @@ def main():
             <!-- 儀錶板首頁 (Dashboard) -->
             <div id="Dashboard" class="page-view">
                 <div class="info-box">
-                    <p>🎯 <b>行動端儀錶板：</b> 點擊下方任意策略卡片，即可查看該策略的詳細選股條件與符合個股清單。</p>
+                    <p>🎯 <b>行動端儀錶板：</b> 點擊下方任意策略卡片，即可進入明細並使用外資、投信、大戶即時篩選器。</p>
                 </div>
                 <div class="dash-grid">
                     {dashboard_cards_html}
@@ -1757,7 +1823,7 @@ def main():
                     <button class="add-stock-btn" onclick="addCustomStock()">新增觀察 +</button>
                 </div>
                 <div class="info-box">
-                    <p>🎯 <b>自選清單說明：</b> 包含您從各策略中點擊 ⭐ 加入的標的，以及手動輸入代號新增的觀察股，資料會安全存放在您的手機瀏覽器中。</p>
+                    <p>🎯 <b>自選清單說明：</b> 包含您從各策略中點擊 ⭐ 加入的標的，以及手動輸入代號新增的觀察股。</p>
                     <div class="count-badge">💖 總計觀察：<span id="count_Tab_Favorites">0</span> 檔</div>
                 </div>
                 <div id="fav-empty-msg" style="text-align:center; padding: 40px; color:#64748b; font-size:14px; display:none;">
@@ -1843,6 +1909,91 @@ def main():
                     alert('該股票已在最愛清單中！');
                 }}
                 input.value = '';
+            }}
+
+            // 即時篩選功能（支援外資、投信、千張大戶交叉篩選）
+            function filterTableRows(pageId, selectElem, filterType) {{
+                const page = document.getElementById(pageId);
+                if(!page) return;
+                const table = page.querySelector('table');
+                if(!table) return;
+
+                const rows = table.querySelectorAll('tbody tr');
+                const headers = Array.from(table.querySelectorAll('thead th'));
+
+                // 定義對應表頭關鍵字
+                let colIdx = -1;
+                headers.forEach((th, idx) => {{
+                    let txt = th.innerText;
+                    if(filterType === 'foreign' && (txt.includes('外資近七日') || txt.includes('外資'))) colIdx = idx;
+                    if(filterType === 'trust' && (txt.includes('投信近七日') || txt.includes('投信'))) colIdx = idx;
+                    if(filterType === 'whale' && txt.includes('千張大戶')) colIdx = idx;
+                }});
+
+                const val = selectElem.value;
+                let visibleCount = 0;
+
+                rows.forEach(row => {{
+                    let showByThis = true;
+                    if(colIdx >= 0) {{
+                        const cell = row.querySelectorAll('td')[colIdx];
+                        if(cell) {{
+                            const num = parseFloat(cell.innerText.replace(/,/g, '').replace(/%/g, ''));
+                            if(!isNaN(num)) {{
+                                if(val === 'ge0' && num < 0) showByThis = false;
+                                if(val === 'ge50' && num < 50) showByThis = false;
+                                if(val === 'ge100' && num < 100) showByThis = false;
+                                if(val === 'ge200' && num < 200) showByThis = false;
+                                if(val === 'ge500' && num < 500) showByThis = false;
+                                if(val === 'ge35' && num < 35) showByThis = false;
+                                if(val === 'ge50' && num < 50 && filterType === 'whale') showByThis = false;
+                                if(val === 'ge70' && num < 70) showByThis = false;
+                            }}
+                        }}
+                    }}
+
+                    // 檢查是否同時符合同一頁面上的其他篩選器
+                    const toolbars = page.querySelectorAll('.filter-toolbar select');
+                    let allMatch = true;
+                    // 簡易實作：若本行被任一目前選定的非all條件排除則隱藏
+                    if(!showByThis) {{
+                        row.style.display = 'none';
+                    }} else {{
+                        // 重新確認該行是否符合所有下拉選單條件
+                        let passAll = true;
+                        toolbars.forEach(tb => {{
+                            if(tb.value !== 'all') {{
+                                let tType = 'foreign';
+                                if(tb.parentNode.innerText.includes('投信')) tType = 'trust';
+                                if(tb.parentNode.innerText.includes('大戶')) tType = 'whale';
+                                
+                                let cIdx = -1;
+                                headers.forEach((th, idx) => {{
+                                    let txt = th.innerText;
+                                    if(tType === 'foreign' && (txt.includes('外資近七日') || txt.includes('外資'))) cIdx = idx;
+                                    if(tType === 'trust' && (txt.includes('投信近七日') || txt.includes('投信'))) cIdx = idx;
+                                    if(tType === 'whale' && txt.includes('千張大戶')) cIdx = idx;
+                                }});
+                                if(cIdx >= 0) {{
+                                    let cVal = parseFloat(row.querySelectorAll('td')[cIdx].innerText.replace(/,/g, '').replace(/%/g, ''));
+                                    let req = tb.value;
+                                    if(req === 'ge0' && cVal < 0) passAll = false;
+                                    if(req === 'ge50' && cVal < 50) passAll = false;
+                                    if(req === 'ge100' && cVal < 100) passAll = false;
+                                    if(req === 'ge200' && cVal < 200) passAll = false;
+                                    if(req === 'ge500' && cVal < 500) passAll = false;
+                                    if(req === 'ge35' && cVal < 35) passAll = false;
+                                    if(req === 'ge70' && cVal < 70) passAll = false;
+                                }}
+                            }}
+                        }});
+                        row.style.display = passAll ? '' : 'none';
+                        if(passAll) visibleCount++;
+                    }}
+                }});
+
+                const badge = page.querySelector('.count-badge span');
+                if(badge) badge.innerText = visibleCount;
             }}
 
             document.addEventListener('click', function(e) {{
@@ -1940,7 +2091,7 @@ def main():
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(html_content)
 
-    print(f"\n✅ 策略說明已詳細化，手機端儀錶板網頁已生成: {html_filename}")
+    print(f"\n✅ 各策略即時篩選器已全數加裝完成！網頁已生成: {html_filename}")
     if os.environ.get("GITHUB_ACTIONS") != "true":
         webbrowser.open(f"file:///{file_path}")
 

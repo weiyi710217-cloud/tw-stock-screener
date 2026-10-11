@@ -412,8 +412,10 @@ def fetch_finmind_revenue(year: int, month: int) -> pd.DataFrame:
     print(f"🌐 透過 FinMind API 抓取 [{year}/{month:02d}] 營收資料...")
     start_date = f"{year}-{month:02d}-01"
     
-    # FinMind API 正式網址 (若您有 FinMind token 可串接在後面，若無則直接呼叫公開端點)
-    url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockMonthRevenue&data_id=&start_date={start_date}"
+    # 從 GitHub Actions Secrets 或系統環境變數中安全讀取 Token
+    token = os.environ.get("FINMIND_TOKEN", "")
+    
+    url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockMonthRevenue&start_date={start_date}&token={token}"
     
     data = safe_request_json(url, headers=OPENAPI_HEADERS)
     
@@ -424,7 +426,6 @@ def fetch_finmind_revenue(year: int, month: int) -> pd.DataFrame:
         
         if data.get("data"):
             for item in data["data"]:
-                # 確保是該年月的資料
                 date_str = str(item.get("date", ""))
                 if date_str.startswith(f"{year}-{month:02d}"):
                     stock_id = str(item.get("stock_id", "")).strip()
@@ -440,6 +441,7 @@ def fetch_finmind_revenue(year: int, month: int) -> pd.DataFrame:
     
     print(f"⚠ FinMind [{year}/{month:02d}] 無有效資料或解析為空")
     return pd.DataFrame(columns=["股票代號", f"營收_{year-1911}_{month:02d}"])
+
 
 def get_revenue_analysis() -> pd.DataFrame:
     today = datetime.date.today()

@@ -1239,6 +1239,47 @@ def main():
     df_strat21_show["隔日平均報酬(%)"] = df_strat21_show["隔日平均報酬(%)"].apply(color_pct)
     html_tb21 = df_strat21_show.to_html(index=False, classes="styled-table backtest-table sortable-table", escape=False)
 
+    # 策略 12: 綜合排行
+    st_lists = [
+        ("1.跳空", res1), ("2.墊高", res2), ("3.量增法人", res3),
+        ("4.創20日高", res4), ("5.拔蔥", res5), ("6.五日高", res6),
+        ("7.創20日高不賣", res7), ("8.連兩日創高", res8), ("9.多重", res9),
+        ("10.上櫃強勢", res10), ("11.上櫃實體紅K", res11), ("13.逼近60日高", res13),
+        ("14.創20日高+法人七日不賣", res14), ("15.壓縮突破60日", res15_strict),
+        ("16.突破最大量高點", res16), ("17.創120日高", res17),
+        ("20.外資越買越多出量", res20), ("22.高勝率基因複合", res22),
+        ("23.突破10日最大量", res23), ("24.飆股基因起漲", res24),
+        ("25.倚強科模式複製", res25), ("32.大戶鎖碼法人集中", res32),
+        ("33.絕對鎖碼突破", res33),
+        ("27.組合首選", strat_results_27_31[27]["df"]),
+        ("28.組合第二", strat_results_27_31[28]["df"]),
+        ("29.組合第三", strat_results_27_31[29]["df"]),
+        ("30.組合第四", strat_results_27_31[30]["df"]),
+        ("31.組合第五", strat_results_27_31[31]["df"]),
+    ]
+    
+    hit_counts, hit_names = {}, {}
+    for s_name, res_df in st_lists:
+        if res_df.empty or "股票代號" not in res_df.columns: continue
+        for code in res_df['股票代號'].values:
+            if code not in hit_counts:
+                hit_counts[code] = 0
+                hit_names[code] = []
+            hit_counts[code] += 1
+            hit_names[code].append(s_name)
+            
+    if hit_counts:
+        df_hits = pd.DataFrame([{"股票代號": k, "入選次數": v, "符合策略": ", ".join(hit_names[k])} for k, v in hit_counts.items()])
+        res12 = pd.merge(df_hits, df_merge, on="股票代號", how="inner")
+        res12['近7日符合次數'] = res12['入選次數'].apply(lambda x: f"命中 {x} 個策略")
+        res12 = res12.sort_values(by=["入選次數", "最新漲幅(%)"], ascending=[False, False]).head(50)
+        res12 = res12.rename(columns=std_rename)
+        cols12 = base_cols + ["入選次數", "符合策略"] + chip_cols
+        html_tb12 = apply_color_formatting(res12[cols12]).to_html(index=False, classes="styled-table sortable-table", escape=False)
+    else:
+        res12 = pd.DataFrame()
+        html_tb12 = "<p style='text-align:center;'>目前無任何股票入選預設策略</p>"
+
     # 收集所有策略與對應的 HTML 內容，用於儀錶板卡片與明細頁
     strategies_meta = [
         ("Tab_Strat12", "🌟 綜合排行", "統計所有策略預設條件下，選中最多次的股票排序。", len(res12), html_tb12),
@@ -1283,7 +1324,6 @@ def main():
         </details>
         """
 
-    # 動態組合所有策略的明細頁面 HTML
     pages_html_blocks = ""
     dashboard_cards_html = ""
 
@@ -1384,7 +1424,6 @@ def main():
                 margin: 0 auto;
             }}
 
-            /* 儀錶板手機卡片格線 */
             .dash-grid {{
                 display: grid;
                 grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -1427,7 +1466,6 @@ def main():
                 align-items: center;
             }}
 
-            /* 次頁面標題列 */
             .sub-header {{
                 display: flex;
                 align-items: center;
@@ -1450,7 +1488,6 @@ def main():
                 color: var(--primary);
             }}
 
-            /* 我的最愛與自訂新增列 */
             .add-stock-box {{
                 background: white;
                 border: 1px solid var(--border);
@@ -1693,7 +1730,7 @@ def main():
         <div class="container">
             {warning_html}
 
-            <!-- 首頁儀錶板 (Dashboard) -->
+            <!-- 儀錶板首頁 (Dashboard) -->
             <div id="Dashboard" class="page-view">
                 <div class="info-box">
                     <p>🎯 <b>行動端儀錶板：</b> 請點擊下方卡片即可進入各策略明細表，或點擊右上角隨時查看「我的最愛」。</p>

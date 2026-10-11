@@ -424,14 +424,16 @@ def fetch_finmind_revenue(year: int, month: int) -> pd.DataFrame:
         for item in data["data"]:
             stock_id = str(item.get("stock_id", "")).strip()
             if len(stock_id) == 4 and stock_id.isdigit():
-                rev = to_float(item.get("revenue", 0)) / 1000.0  # 轉換為千元單位以保持一致
+                rev = to_float(item.get("revenue", 0)) / 1000.0  
                 rows.append({"股票代號": stock_id, f"營收_{year-1911}_{month:02d}": rev})
 
     if rows:
         df_res = pd.DataFrame(rows).drop_duplicates(subset=["股票代號"])
+        print(f"🔍 FinMind [{year}/{month:02d}] 成功解析筆數: {len(df_res)}")
         df_res.to_csv(cache_file, index=False, encoding="utf-8-sig")
         return df_res
     
+    print(f"⚠ FinMind [{year}/{month:02d}] 無有效資料")
     return pd.DataFrame(columns=["股票代號", f"營收_{year-1911}_{month:02d}"])
 
 def get_revenue_analysis() -> pd.DataFrame:

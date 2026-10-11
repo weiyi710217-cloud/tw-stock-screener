@@ -2076,4 +2076,4 @@ def main():
         webbrowser.open(f"file:///{file_path}")
 
 if __name__ == "__main__":
-    main()
+    main() 

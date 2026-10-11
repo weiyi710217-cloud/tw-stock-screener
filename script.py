@@ -402,52 +402,51 @@ def get_foreign_holdings() -> pd.DataFrame:
     return pd.DataFrame(columns=["股票代號", "外資持股比例(%)", "發行總張數"])
 
 
-from io import StringIO
-
 def fetch_finmind_revenue(year: int, month: int) -> pd.DataFrame:
-    # 這裡保留原本的快取檔名架構，每個月只需成功抓一次就會存入 stock_cache/
     cache_file = os.path.join(CACHE_DIR, f"finmind_rev_{year}_{month:02d}.csv")
     if is_valid_cache(cache_file, min_size=50):
         return pd.read_csv(cache_file, dtype={"股票代號": str})
 
-    print(f"🌐 透過官方公開來源抓取 [{year}/{month:02d}] 月營收資料...")
+    print(f"🌐 透過證交所 OpenAPI 抓取 [{year}/{month:02d}] 月營收資料...")
     year_roc = year - 1911
+    
+    # 證交所/櫃買官方每月份營收彙總 OpenAPI (示範以證交所公開資料集為主)
+    # 若該月份資料尚未完整公布，會自動退回空表以避免報錯
+    urls = [
+        f"https://openapi.twse.com.tw/v1/opendata/t187ap05_L",  # 上市公司月營收
+        f"https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap05_O" # 上櫃公司月營收
+    ]
+    
     rows = {}
-
-    # 同時向上市 (sii) 與上櫃 (otc) 的公開資訊觀測站靜態網頁發送請求
-    for market in ["sii", "otc"]:
-        url = f"https://mops.twse.com.tw/nas/t21/{market}/t21sc03_{year_roc}_{month}_0.html"
+    for url in urls:
         try:
-            resp = requests.get(url, headers=TWSE_HEADERS, timeout=10)
-            if resp.status_code != 200:
-                continue
-            # 官方網頁編碼通常為 big5
-            html = resp.content.decode("big5", errors="ignore")
-            tables = pd.read_html(StringIO(html))
-            
-            for t in tables:
-                if t.shape[1] < 11:
-                    continue
-                for r in t.itertuples(index=False):
-                    code = str(r[0]).strip()
-                    if code.isdigit() and len(code) == 4:
-                        rev = to_float(r[2])  # 當月營收
+            resp = requests.get(url, headers=OPENAPI_HEADERS, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                for item in data:
+                    # 欄位名稱依官方 OpenAPI 規範對應
+                    # 通常包含 '公司代號', '年月' (例如 11509), '當月營收'
+                    code = str(item.get("公司代號", item.get("stock_id", ""))).strip()
+                    period = str(item.get("年月", item.get("DataMonth", ""))).strip()
+                    
+                    # 比對民國年及月份 (例如 11509)
+                    target_period = f"{year_roc}{month:02d}"
+                    if period == target_period and len(code) == 4 and code.isdigit():
+                        rev = to_float(item.get("當月營收", item.get("Revenue", 0))) / 1000.0
                         if rev > 0:
                             rows[code] = rev
         except Exception as e:
-            print(f"⚠ 抓取 {market} {year_roc}/{month:02d} 營收發生錯誤: {e}")
-        time.sleep(0.3)
+            print(f"⚠ 抓取官方 OpenAPI 發生錯誤: {e}")
 
     if rows:
         col_name = f"營收_{year_roc}_{month:02d}"
         df_res = pd.DataFrame({"股票代號": list(rows.keys()), col_name: list(rows.values())})
-        print(f"🔍 官方來源 [{year}/{month:02d}] 成功解析筆數: {len(df_res)}")
+        print(f"🔍 官方 OpenAPI [{year}/{month:02d}] 成功解析筆數: {len(df_res)}")
         df_res.to_csv(cache_file, index=False, encoding="utf-8-sig")
         return df_res
 
-    print(f"⚠ 官方來源 [{year}/{month:02d}] 無有效資料")
+    print(f"⚠ 官方 OpenAPI [{year}/{month:02d}] 無有效資料")
     return pd.DataFrame(columns=["股票代號", f"營收_{year-1911}_{month:02d}"])
-
 
 def get_revenue_analysis() -> pd.DataFrame:
     today = datetime.date.today()

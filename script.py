@@ -1239,45 +1239,31 @@ def main():
     df_strat21_show["隔日平均報酬(%)"] = df_strat21_show["隔日平均報酬(%)"].apply(color_pct)
     html_tb21 = df_strat21_show.to_html(index=False, classes="styled-table backtest-table sortable-table", escape=False)
 
-    # 策略 12: 綜合排行
-    st_lists = [
-        ("1.跳空", res1), ("2.墊高", res2), ("3.量增法人", res3),
-        ("4.創20日高", res4), ("5.拔蔥", res5), ("6.五日高", res6),
-        ("7.創20日高不賣", res7), ("8.連兩日創高", res8), ("9.多重", res9),
-        ("10.上櫃強勢", res10), ("11.上櫃實體紅K", res11), ("13.逼近60日高", res13),
-        ("14.創20日高+法人七日不賣", res14), ("15.壓縮突破60日", res15_strict),
-        ("16.突破最大量高點", res16), ("17.創120日高", res17),
-        ("20.外資越買越多出量", res20), ("22.高勝率基因複合", res22),
-        ("23.突破10日最大量", res23), ("24.飆股基因起漲", res24),
-        ("25.倚強科模式複製", res25), ("32.大戶鎖碼法人集中", res32),
-        ("33.絕對鎖碼突破", res33),
-        ("27.組合首選", strat_results_27_31[27]["df"]),
-        ("28.組合第二", strat_results_27_31[28]["df"]),
-        ("29.組合第三", strat_results_27_31[29]["df"]),
-        ("30.組合第四", strat_results_27_31[30]["df"]),
-        ("31.組合第五", strat_results_27_31[31]["df"]),
+    # 收集所有策略與對應的 HTML 內容，用於儀錶板卡片與明細頁
+    strategies_meta = [
+        ("Tab_Strat12", "🌟 綜合排行", "統計所有策略預設條件下，選中最多次的股票排序。", len(res12), html_tb12),
+        ("Tab_Strat27", "🎖 組合首選 (策略27)", f"歷史勝率 {strat_results_27_31[27]['win_rate']}% 的三策略黃金組合。", strat_results_27_31[27]["count"], strat_results_27_31[27]["html"]),
+        ("Tab_Strat28", "🎖 組合第二 (策略28)", f"歷史勝率 {strat_results_27_31[28]['win_rate']}% 的三策略黃金組合。", strat_results_27_31[28]["count"], strat_results_27_31[28]["html"]),
+        ("Tab_Strat17", "🏆 創 120 日半年新高", "最新收盤價大於過去 120 個交易日內最高價。", len(res17), html_tb17),
+        ("Tab_Strat4", "🏆 創 20 日新高 ＋ 投信不賣", "創 20 日新高、過去七天投信不賣且量增。", len(res4), html_tb4),
+        ("Tab_Strat6", "🏆 創 5 日高 ＋ 跳空量增", "創五日新高 & 跳空量增 & 法人連三日不賣。", len(res6), html_tb6),
+        ("Tab_Strat7", "🏆 創 20 日高 ＋ 底底高", "創 20 日新高 & 底底高 & 收高量增 & 法人連七不賣。", len(res7), html_tb7),
+        ("Tab_Strat13", "🏆 逼近 60 日高 (-2%以內)", "距離近 60 日最高收盤價在 -2% 以內，量大於 500 張。", len(res13), html_tb13),
+        ("Tab_Strat15", "🏆 壓縮突破 60 日高", "收盤價創 60 日新高，且量增 1.2 倍，底部區間壓縮突破。", len(res15), html_tb15),
+        ("Tab_Strat23", "🔥 突破 10 天最大量高點", "最新收盤價正式站上過去 10 個交易日內成交量最大當日的最高價。", len(res23), html_tb23),
+        ("Tab_Strat16", "🔥 突破 60 天最大量高點", "突破 60 日成交量最大當日高點，外資投信近 7 天無賣出。", len(res16), html_tb16),
+        ("Tab_Strat22", "📈 高勝率基因精選", "融合創五日高、跳空、連續墊高精華。", len(res22), html_tb22),
+        ("Tab_Strat1", "📈 向上跳空不補＋連續量增", "向上跳空不回補、連續量增。", len(res1), html_tb1),
+        ("Tab_Strat2", "📈 階梯式墊高 ＋ 外資點火", "階梯式墊高、外資點火、過去七天法人不賣出。", len(res2), html_tb2),
+        ("Tab_Strat33", "👑 絕對鎖碼 (大戶>70%)", "千張大戶比例 > 70% ＋ 多頭排列 ＋ 距半年高點 ±5% 內。", len(res33), html_tb33),
+        ("Tab_Strat32", "👑 大戶鎖碼 ＋ 法人集中度", "千張大戶佔比 > 60% ＋ 法人買超集中度高。", 0, html_tb32),
+        ("Tab_Strat25", "👑 倚強科模式複製", "千張大戶 &ge; 60% ＋ 5MA>20MA ＋ 出量 1.5 倍。", len(res25), html_tb25),
+        ("Tab_Strat20", "🚀 外資連三日買超且越買越多", "外資連三買且張數遞增 ＋ 最新一日出量收紅。", len(res20), html_tb20),
+        ("Tab_Strat3", "🚀 投信不賣 ＋ 外資連買", "最新日量增、投信七日不賣出、外資連續買超。", len(res3), html_tb3),
+        ("Tab_Strat11", "🎯 上櫃實體紅 K 強勢股", "限定上櫃股票 | 實體紅K強勢股 (收盤大於開盤)。", len(res11), html_tb11),
+        ("Tab_Backtest26", "📊 9月三策略組合挖掘", "回測 9 月份任三策略同時命中之 10/1~10/8 實際績效。", 969, html_tb26),
+        ("Tab_Backtest21", "📊 過去30天單策略勝率", "統計各策略在過去 30 個交易日內選出個股的隔日上漲勝率。", len(df_strat21), html_tb21)
     ]
-    
-    hit_counts, hit_names = {}, {}
-    for s_name, res_df in st_lists:
-        if res_df.empty or "股票代號" not in res_df.columns: continue
-        for code in res_df['股票代號'].values:
-            if code not in hit_counts:
-                hit_counts[code] = 0
-                hit_names[code] = []
-            hit_counts[code] += 1
-            hit_names[code].append(s_name)
-            
-    if hit_counts:
-        df_hits = pd.DataFrame([{"股票代號": k, "入選次數": v, "符合策略": ", ".join(hit_names[k])} for k, v in hit_counts.items()])
-        res12 = pd.merge(df_hits, df_merge, on="股票代號", how="inner")
-        res12['近7日符合次數'] = res12['入選次數'].apply(lambda x: f"命中 {x} 個策略")
-        res12 = res12.sort_values(by=["入選次數", "最新漲幅(%)"], ascending=[False, False]).head(50)
-        res12 = res12.rename(columns=std_rename)
-        cols12 = base_cols + ["入選次數", "符合策略"] + chip_cols
-        html_tb12 = apply_color_formatting(res12[cols12]).to_html(index=False, classes="styled-table sortable-table", escape=False)
-    else:
-        html_tb12 = "<p style='text-align:center;'>目前無任何股票入選預設策略</p>"
 
     warning_html = ""
     if WARNINGS:
@@ -1295,6 +1281,33 @@ def main():
                 <ul>{warn_items_html}</ul>
             </div>
         </details>
+        """
+
+    # 動態組合所有策略的明細頁面 HTML
+    pages_html_blocks = ""
+    dashboard_cards_html = ""
+
+    for tab_id, title, desc, count, tbl_html in strategies_meta:
+        dashboard_cards_html += f"""
+        <div class="dash-card" onclick="showPage('{tab_id}')">
+            <div class="dash-card-title">{title}</div>
+            <div class="dash-card-desc">{desc}</div>
+            <div class="dash-card-badge">符合標的：<b>{count}</b> 檔 ➔</div>
+        </div>
+        """
+
+        pages_html_blocks += f"""
+        <div id="{tab_id}" class="page-view" style="display:none;">
+            <div class="sub-header">
+                <button class="back-btn" onclick="showPage('Dashboard')">⬅ 返回儀錶板</button>
+                <h2>{title}</h2>
+            </div>
+            <div class="info-box">
+                <p>🎯 <b>選股說明：</b> {desc}</p>
+                <div class="count-badge">符合：{count} 檔</div>
+            </div>
+            <div class="table-container">{tbl_html}</div>
+        </div>
         """
 
     html_content = f"""
@@ -1325,17 +1338,20 @@ def main():
                 margin: 0;
                 background-color: var(--bg);
                 color: var(--text);
-                padding-bottom: 50px;
+                padding-bottom: 70px;
             }}
 
             .app-header {{
                 background: linear-gradient(135deg, var(--primary), var(--primary-light));
                 color: white;
-                padding: 10px 16px;
+                padding: 12px 16px;
                 position: sticky;
                 top: 0;
                 z-index: 100;
                 box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
             }}
 
             .app-header h1 {{
@@ -1343,9 +1359,6 @@ def main():
                 font-size: 16px;
                 font-weight: 700;
                 letter-spacing: 0.5px;
-                display: flex;
-                align-items: center;
-                gap: 6px;
             }}
 
             .app-header p {{
@@ -1354,49 +1367,116 @@ def main():
                 opacity: 0.85;
             }}
 
-            .tabs-wrapper {{
-                background: white;
-                border-bottom: 1px solid var(--border);
-                position: sticky;
-                top: 48px;
-                z-index: 90;
-                padding: 6px 10px;
-                display: flex;
-                flex-wrap: nowrap;
-                overflow-x: auto;
-                -webkit-overflow-scrolling: touch;
-                scrollbar-width: none;
-                gap: 6px;
-                box-shadow: 0 2px 4px rgba(0,0,0,0.02);
-            }}
-            .tabs-wrapper::-webkit-scrollbar {{ display: none; }}
-
-            .tab-btn {{
-                background: #f1f5f9;
-                border: 1px solid var(--border);
-                outline: none;
-                cursor: pointer;
-                padding: 5px 12px;
-                border-radius: 16px;
+            .fav-quick-btn {{
+                background: rgba(255,255,255,0.2);
+                border: 1px solid rgba(255,255,255,0.4);
+                color: white;
+                padding: 6px 12px;
+                border-radius: 20px;
                 font-size: 12px;
                 font-weight: 600;
-                color: var(--text-muted);
-                white-space: nowrap;
-                flex-shrink: 0;
-                transition: all 0.15s ease;
-            }}
-
-            .tab-btn.active {{
-                background: var(--primary);
-                color: white;
-                border-color: var(--primary);
-                box-shadow: 0 2px 4px rgba(30, 58, 138, 0.2);
+                cursor: pointer;
             }}
 
             .container {{
-                padding: 8px;
+                padding: 10px;
                 max-width: 1500px;
                 margin: 0 auto;
+            }}
+
+            /* 儀錶板手機卡片格線 */
+            .dash-grid {{
+                display: grid;
+                grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+                gap: 10px;
+                margin-top: 10px;
+            }}
+
+            .dash-card {{
+                background: var(--card-bg);
+                border: 1px solid var(--border);
+                border-radius: 10px;
+                padding: 14px;
+                cursor: pointer;
+                box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+                transition: transform 0.1s ease, box-shadow 0.1s ease;
+            }}
+            .dash-card:active {{ transform: scale(0.98); }}
+            .dash-card:hover {{ border-color: var(--primary-light); box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15); }}
+
+            .dash-card-title {{
+                font-size: 14px;
+                font-weight: 700;
+                color: var(--primary);
+                margin-bottom: 4px;
+            }}
+            .dash-card-desc {{
+                font-size: 11px;
+                color: var(--text-muted);
+                line-height: 1.3;
+                margin-bottom: 8px;
+                height: 28px;
+                overflow: hidden;
+            }}
+            .dash-card-badge {{
+                font-size: 12px;
+                font-weight: 600;
+                color: var(--up-red);
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            }}
+
+            /* 次頁面標題列 */
+            .sub-header {{
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                margin-bottom: 10px;
+            }}
+            .back-btn {{
+                background: #e2e8f0;
+                border: none;
+                padding: 6px 12px;
+                border-radius: 6px;
+                font-size: 12px;
+                font-weight: 600;
+                cursor: pointer;
+                color: var(--text);
+            }}
+            .sub-header h2 {{
+                margin: 0;
+                font-size: 15px;
+                color: var(--primary);
+            }}
+
+            /* 我的最愛與自訂新增列 */
+            .add-stock-box {{
+                background: white;
+                border: 1px solid var(--border);
+                padding: 10px;
+                border-radius: 8px;
+                margin-bottom: 10px;
+                display: flex;
+                gap: 8px;
+            }}
+            .add-stock-input {{
+                flex: 1;
+                padding: 6px 10px;
+                font-size: 12px;
+                border: 1px solid #cbd5e1;
+                border-radius: 6px;
+                outline: none;
+            }}
+            .add-stock-btn {{
+                background: var(--primary);
+                color: white;
+                border: none;
+                padding: 6px 14px;
+                border-radius: 6px;
+                font-size: 12px;
+                font-weight: 600;
+                cursor: pointer;
             }}
 
             .warning-details {{
@@ -1431,20 +1511,6 @@ def main():
             .warning-body ul {{ margin: 4px 0 0 16px; padding: 0; }}
             .warning-body li {{ margin-bottom: 2px; }}
 
-            .module-nav-box {{
-                background: var(--card-bg);
-                border-radius: 8px;
-                padding: 8px 12px;
-                margin-bottom: 8px;
-                border: 1px solid var(--border);
-                box-shadow: 0 1px 3px rgba(0,0,0,0.04);
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                flex-wrap: wrap;
-                gap: 8px;
-            }}
-
             .info-box {{
                 background: var(--card-bg);
                 border-radius: 8px;
@@ -1461,10 +1527,6 @@ def main():
                 color: var(--text-muted);
             }}
 
-            .info-box b {{
-                color: var(--text);
-            }}
-
             .count-badge {{
                 display: inline-flex;
                 align-items: center;
@@ -1475,17 +1537,6 @@ def main():
                 font-weight: 700;
                 font-size: 12px;
                 margin-top: 6px;
-            }}
-
-            .custom-select {{
-                padding: 5px 10px;
-                font-size: 12px;
-                font-weight: 600;
-                border-radius: 6px;
-                border: 1px solid #cbd5e1;
-                background-color: white;
-                color: var(--text);
-                outline: none;
             }}
 
             .table-container {{
@@ -1611,21 +1662,9 @@ def main():
                 color: var(--primary-light);
             }}
 
-            .tag-up {{
-                color: #dc2626;
-                font-weight: 700;
-                display: inline-block;
-            }}
-            .tag-down {{
-                color: #16a34a;
-                font-weight: 700;
-                display: inline-block;
-            }}
-            .tag-flat {{
-                color: #64748b;
-                font-weight: 600;
-                display: inline-block;
-            }}
+            .tag-up {{ color: #dc2626; font-weight: 700; display: inline-block; }}
+            .tag-down {{ color: #16a34a; font-weight: 700; display: inline-block; }}
+            .tag-flat {{ color: #64748b; font-weight: 600; display: inline-block; }}
 
             .fav-star {{
                 cursor: pointer;
@@ -1640,293 +1679,52 @@ def main():
 
             #fav-table tbody tr {{ display: none; }}
             #fav-table tbody tr.row-favorite {{ display: table-row; }}
-
-            .tabcontent {{ display: none; }}
-            .sub-tab-content {{ display: none; }}
         </style>
     </head>
     <body>
         <div class="app-header">
-            <h1>📈 多策略選股中心</h1>
-            <p>歷史區間: T-120日 ({date_120}) ➔ 最新日 ({date_0})</p>
-        </div>
-
-        <div class="tabs-wrapper" id="tabsHeader">
-            <button class="tab-btn" onclick="openStrategy(event, 'Tab_Favorites')">💖 我的最愛</button>
-            <button class="tab-btn active" onclick="openStrategy(event, 'Tab_Strat12')">🌟 綜合排行</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Tab_TopCombos')">🎖 最佳回測組合</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Tab_Breakout')">🏆 創高突破</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Tab_MaxVol')">🔥 天量突破</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Tab_StepGap')">📈 墊高跳空</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Tab_Whale')">👑 主力鎖碼</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Tab_Inst')">🚀 法人動能</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Tab_OTC')">🎯 上櫃強勢</button>
-            <button class="tab-btn" onclick="openStrategy(event, 'Tab_Backtest')">📊 量化回測總覽</button>
+            <div>
+                <h1>📈 多策略選股中心</h1>
+                <p>歷史區間: T-120日 ({date_120}) ➔ 最新日 ({date_0})</p>
+            </div>
+            <button class="fav-quick-btn" onclick="showPage('Tab_Favorites')">⭐ 我的最愛 (<span id="fav-count">0</span>)</button>
         </div>
 
         <div class="container">
             {warning_html}
 
-            <!-- 0. 我的最愛 -->
-            <div id="Tab_Favorites" class="tabcontent">
+            <!-- 首頁儀錶板 (Dashboard) -->
+            <div id="Dashboard" class="page-view">
                 <div class="info-box">
-                    <p>🎯 <b>我的最愛：</b> 跨裝置（瀏覽器本地端）儲存的專屬觀察清單，點選表格中的 ⭐ 即可加入。</p>
-                    <div class="count-badge">💖 自選清單：<span id="count_Tab_Favorites">0</span> 檔</div>
+                    <p>🎯 <b>行動端儀錶板：</b> 請點擊下方卡片即可進入各策略明細表，或點擊右上角隨時查看「我的最愛」。</p>
+                </div>
+                <div class="dash-grid">
+                    {dashboard_cards_html}
+                </div>
+            </div>
+
+            <!-- 我的最愛與自訂觀察股分頁 -->
+            <div id="Tab_Favorites" class="page-view" style="display:none;">
+                <div class="sub-header">
+                    <button class="back-btn" onclick="showPage('Dashboard')">⬅ 返回儀錶板</button>
+                    <h2>⭐ 我的最愛與自訂觀察股</h2>
+                </div>
+                <div class="add-stock-box">
+                    <input type="text" id="customCodeInput" class="add-stock-input" placeholder="輸入 4 位數股票代號 (例如 2330)..." maxlength="4">
+                    <button class="add-stock-btn" onclick="addCustomStock()">新增觀察 +</button>
+                </div>
+                <div class="info-box">
+                    <p>🎯 <b>自選清單說明：</b> 包含一鍵勾選的標的與您手動新增的觀察股。</p>
+                    <div class="count-badge">💖 總計觀察：<span id="count_Tab_Favorites">0</span> 檔</div>
                 </div>
                 <div id="fav-empty-msg" style="text-align:center; padding: 40px; color:#64748b; font-size:14px; display:none;">
-                    尚未加入任何最愛標的，請點擊各策略清單中的 ⭐ 圖示即可加入。
+                    尚未加入任何最愛標的，請點擊各策略清單中的 ⭐ 圖示，或在上方輸入代號新增。
                 </div>
                 <div class="table-container">{html_tb_fav}</div>
             </div>
 
-            <!-- 1. 綜合排行 -->
-            <div id="Tab_Strat12" class="tabcontent" style="display: block;">
-                <div class="info-box">
-                    <p>🎯 <b>選股邏輯：</b> 統計所有策略預設條件下，選中最多次的股票排序。</p>
-                    <div class="count-badge">✅ 前 50 名強勢標的</div>
-                </div>
-                <div class="table-container">{html_tb12}</div>
-            </div>
-
-            <!-- 2. 最佳回測組合 -->
-            <div id="Tab_TopCombos" class="tabcontent">
-                <div class="module-nav-box">
-                    <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇回測最佳組合：</span>
-                    <select class="custom-select" onchange="switchSubTab('Tab_TopCombos', this.value)">
-                        <option value="sub_strat27" selected>27. 組合首選 (勝率 {strat_results_27_31[27]["win_rate"]}%)</option>
-                        <option value="sub_strat28">28. 組合第二 (勝率 {strat_results_27_31[28]["win_rate"]}%)</option>
-                        <option value="sub_strat29">29. 組合第三 (勝率 {strat_results_27_31[29]["win_rate"]}%)</option>
-                        <option value="sub_strat30">30. 組合第四 (勝率 {strat_results_27_31[30]["win_rate"]}%)</option>
-                        <option value="sub_strat31">31. 組合第五 (勝率 {strat_results_27_31[31]["win_rate"]}%)</option>
-                    </select>
-                </div>
-                <div id="sub_strat27" class="sub-tab-content" style="display:block;">
-                    <div class="info-box"><p><b>三策略搭配：</b> {strat_results_27_31[27]["combo_name"]}</p><p><b>歷史表現：</b> 上漲率 <b>{strat_results_27_31[27]["win_rate"]}%</b> | 平均漲幅 {strat_results_27_31[27]["avg_ret"]}% | 樣本數 {strat_results_27_31[27]["samples"]} 檔</p><div class="count-badge">今日符合：{strat_results_27_31[27]["count"]} 檔</div></div>
-                    <div class="table-container">{strat_results_27_31[27]["html"]}</div>
-                </div>
-                <div id="sub_strat28" class="sub-tab-content">
-                    <div class="info-box"><p><b>三策略搭配：</b> {strat_results_27_31[28]["combo_name"]}</p><p><b>歷史表現：</b> 上漲率 <b>{strat_results_27_31[28]["win_rate"]}%</b> | 平均漲幅 {strat_results_27_31[28]["avg_ret"]}% | 樣本數 {strat_results_27_31[28]["samples"]} 檔</p><div class="count-badge">今日符合：{strat_results_27_31[28]["count"]} 檔</div></div>
-                    <div class="table-container">{strat_results_27_31[28]["html"]}</div>
-                </div>
-                <div id="sub_strat29" class="sub-tab-content">
-                    <div class="info-box"><p><b>三策略搭配：</b> {strat_results_27_31[29]["combo_name"]}</p><p><b>歷史表現：</b> 上漲率 <b>{strat_results_27_31[29]["win_rate"]}%</b> | 平均漲幅 {strat_results_27_31[29]["avg_ret"]}% | 樣本數 {strat_results_27_31[29]["samples"]} 檔</p><div class="count-badge">今日符合：{strat_results_27_31[29]["count"]} 檔</div></div>
-                    <div class="table-container">{strat_results_27_31[29]["html"]}</div>
-                </div>
-                <div id="sub_strat30" class="sub-tab-content">
-                    <div class="info-box"><p><b>三策略搭配：</b> {strat_results_27_31[30]["combo_name"]}</p><p><b>歷史表現：</b> 上漲率 <b>{strat_results_27_31[30]["win_rate"]}%</b> | 平均漲幅 {strat_results_27_31[30]["avg_ret"]}% | 樣本數 {strat_results_27_31[30]["samples"]} 檔</p><div class="count-badge">今日符合：{strat_results_27_31[30]["count"]} 檔</div></div>
-                    <div class="table-container">{strat_results_27_31[30]["html"]}</div>
-                </div>
-                <div id="sub_strat31" class="sub-tab-content">
-                    <div class="info-box"><p><b>三策略搭配：</b> {strat_results_27_31[31]["combo_name"]}</p><p><b>歷史表現：</b> 上漲率 <b>{strat_results_27_31[31]["win_rate"]}%</b> | 平均漲幅 {strat_results_27_31[31]["avg_ret"]}% | 樣本數 {strat_results_27_31[31]["samples"]} 檔</p><div class="count-badge">今日符合：{strat_results_27_31[31]["count"]} 檔</div></div>
-                    <div class="table-container">{strat_results_27_31[31]["html"]}</div>
-                </div>
-            </div>
-
-            <!-- 3. 創高突破 -->
-            <div id="Tab_Breakout" class="tabcontent">
-                <div class="module-nav-box">
-                    <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇創高週期與條件：</span>
-                    <select class="custom-select" onchange="switchSubTab('Tab_Breakout', this.value)">
-                        <option value="sub_strat17" selected>17. 創 120 日半年新高</option>
-                        <option value="sub_strat4">4. 創 20 日新高 ＋ 投信連七不賣</option>
-                        <option value="sub_strat6">6. 創 5 日高 ＋ 跳空量增 ＋ 法人連三</option>
-                        <option value="sub_strat7">7. 創 20 日高 ＋ 底底高 ＋ 法人連七</option>
-                        <option value="sub_strat13">13. 逼近 60 日高 (-2%以內)</option>
-                        <option value="sub_strat14">14. 創 20 日高 ＋ 法人七日不賣</option>
-                        <option value="sub_strat15">15. 壓縮突破 60 日高</option>
-                        <option value="sub_strat9">9. 多重濾網 (漲幅+創高+大戶)</option>
-                    </select>
-                </div>
-                <div id="sub_strat17" class="sub-tab-content" style="display:block;">
-                    <div class="info-box"><p>🎯 最新收盤價大於過去 120 個交易日內每一天的收盤價 (半年新高)。</p><div class="count-badge">符合：{len(res17)} 檔</div></div>
-                    <div class="table-container">{html_tb17}</div>
-                </div>
-                <div id="sub_strat4" class="sub-tab-content">
-                    <div class="info-box"><p>🎯 創 20 日新高、過去七天投信不賣、量大於前一日。</p><div class="count-badge">符合：{len(res4)} 檔</div></div>
-                    <div class="table-container">{html_tb4}</div>
-                </div>
-                <div id="sub_strat6" class="sub-tab-content">
-                    <div class="info-box"><p>🎯 創五日新高 & 跳空量增 & 法人連三日不賣。</p><div class="count-badge">符合：{len(res6)} 檔</div></div>
-                    <div class="table-container">{html_tb6}</div>
-                </div>
-                <div id="sub_strat7" class="sub-tab-content">
-                    <div class="info-box"><p>🎯 創 20 日新高 & 底底高 & 收高量增 & 法人七日不賣。</p><div class="count-badge">符合：{len(res7)} 檔</div></div>
-                    <div class="table-container">{html_tb7}</div>
-                </div>
-                <div id="sub_strat13" class="sub-tab-content">
-                    <div class="info-box"><p>🎯 最新收盤價距離「近60日最高收盤價」在 -2% 以內，且成交量大於 500 張。</p><div class="count-badge">符合：{len(res13)} 檔</div></div>
-                    <div class="table-container">{html_tb13}</div>
-                </div>
-                <div id="sub_strat14" class="sub-tab-content">
-                    <div class="info-box"><p>🎯 創 20 日新高、量增，且法人（外資、投信）過去 7 天皆無賣出。</p><div class="count-badge">符合：{len(res14)} 檔</div></div>
-                    <div class="table-container">{html_tb14}</div>
-                </div>
-                <div id="sub_strat15" class="sub-tab-content">
-                    <div class="info-box"><p>🎯 收盤價創 60 日新高，且量增 1.2 倍，底部區間壓縮突破。</p><div class="count-badge">符合：{len(res15)} 檔</div></div>
-                    <div class="table-container">{html_tb15}</div>
-                </div>
-                <div id="sub_strat9" class="sub-tab-content">
-                    <div class="info-box"><p>🎯 漲幅過濾 + 創高 + 大戶比例 + 法人連七不賣。</p><div class="count-badge">符合：{len(res9)} 檔</div></div>
-                    <div class="table-container">{html_tb9}</div>
-                </div>
-            </div>
-
-            <!-- 4. 天量突破 -->
-            <div id="Tab_MaxVol" class="tabcontent">
-                <div class="module-nav-box">
-                    <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇天量週期：</span>
-                    <select class="custom-select" onchange="switchSubTab('Tab_MaxVol', this.value)">
-                        <option value="sub_strat23" selected>23. 突破過去 10 天最大量高點</option>
-                        <option value="sub_strat16">16. 突破過去 60 天最大量高點</option>
-                    </select>
-                </div>
-                <div id="sub_strat23" class="sub-tab-content" style="display:block;">
-                    <div class="info-box"><p>🎯 最新收盤價正式站上過去 10 個交易日內成交量最大當日的最高價。</p><div class="count-badge">符合：{len(res23)} 檔</div></div>
-                    <div class="table-container">{html_tb23}</div>
-                </div>
-                <div id="sub_strat16" class="sub-tab-content">
-                    <div class="info-box"><p>🎯 突破 60 日成交量最大當日高點、第一天剛突破且外資投信近 7 天無賣出。</p><div class="count-badge">符合：{len(res16)} 檔</div></div>
-                    <div class="table-container">{html_tb16}</div>
-                </div>
-            </div>
-
-            <!-- 5. 墊高跳空 -->
-            <div id="Tab_StepGap" class="tabcontent">
-                <div class="module-nav-box">
-                    <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇短線型態：</span>
-                    <select class="custom-select" onchange="switchSubTab('Tab_StepGap', this.value)">
-                        <option value="sub_strat22" selected>22. 高勝率基因精選 (創五日高+墊高+跳空)</option>
-                        <option value="sub_strat1">1. 向上跳空不回補 ＋ 連續量增</option>
-                        <option value="sub_strat2">2. 階梯式墊高 ＋ 外資點火</option>
-                        <option value="sub_strat8">8. 連兩日收盤墊高 ＋ 法人連七不賣</option>
-                    </select>
-                </div>
-                <div id="sub_strat22" class="sub-tab-content" style="display:block;">
-                    <div class="info-box"><p>🎯 融合回測第 1 名「創五日高+跳空」、第 2 名「創120日高」、第 3 名「連續墊高」精華。</p><div class="count-badge">符合：{len(res22)} 檔</div></div>
-                    <div class="table-container">{html_tb22}</div>
-                </div>
-                <div id="sub_strat1" class="sub-tab-content">
-                    <div class="info-box"><p>🎯 向上跳空不回補、連續量增。</p><div class="count-badge">符合：{len(res1)} 檔</div></div>
-                    <div class="table-container">{html_tb1}</div>
-                </div>
-                <div id="sub_strat2" class="sub-tab-content">
-                    <div class="info-box"><p>🎯 階梯式墊高、外資點火、過去七天法人不賣出。</p><div class="count-badge">符合：{len(res2)} 檔</div></div>
-                    <div class="table-container">{html_tb2}</div>
-                </div>
-                <div id="sub_strat8" class="sub-tab-content">
-                    <div class="info-box"><p>🎯 連兩日墊高 & 量能放大 & 法人七日不賣。</p><div class="count-badge">符合：{len(res8)} 檔</div></div>
-                    <div class="table-container">{html_tb8}</div>
-                </div>
-            </div>
-
-            <!-- 6. 主力鎖碼 -->
-            <div id="Tab_Whale" class="tabcontent">
-                <div class="module-nav-box">
-                    <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇主力模式：</span>
-                    <select class="custom-select" onchange="switchSubTab('Tab_Whale', this.value)">
-                        <option value="sub_strat33" selected>33. 絕對鎖碼 (大戶>70% + 多頭排列 + 距半年高點-5%~+5%)</option>
-                        <option value="sub_strat32">32. 大戶鎖碼 ＋ 法人集中度</option>
-                        <option value="sub_strat25">25. 倚強科模式複製 (大戶&ge;60% ＋ 均線發散)</option>
-                        <option value="sub_strat24">24. 飆股基因起漲 (近10日漲5%~25%起漲甜蜜區)</option>
-                    </select>
-                </div>
-                <div id="sub_strat33" class="sub-tab-content" style="display:block;">
-                    <div class="info-box">
-                        <p>🎯 <b>策略 33：絕對鎖碼突破</b> 千張大戶比例 &gt; 70% ＋ 5/20/60MA 均線多頭排列 ＋ 最新收盤價距離半年(120日)高點在 -5% ~ +5% 以內（蓄勢待發或剛突破）。</p>
-                        <div class="count-badge">符合：<span id="count_Strat33">{len(res33)}</span> 檔</div>
-                    </div>
-                    <div class="table-container">{html_tb33}</div>
-                </div>
-                <div id="sub_strat32" class="sub-tab-content">
-                    <div class="info-box">
-                        <p>🎯 <b>策略 32：大戶鎖碼 ＋ 法人集中度</b> 千張大戶佔比 > 60%，且過去 1~3 天「外資+投信」合計買超佔總成交量達一定比例。</p>
-                        <div class="filter-container">
-                            <select id="sel_Strat32_days" class="custom-select" onchange="filterStrat32()">
-                                <option value="1">過去 1 天集中度</option>
-                                <option value="2">過去 2 天集中度</option>
-                                <option value="3" selected>過去 3 天集中度</option>
-                            </select>
-                            <select id="sel_Strat32_ratio" class="custom-select" onchange="filterStrat32()">
-                                <option value="10">大於 10%</option>
-                                <option value="20" selected>大於 20%</option>
-                                <option value="30">大於 30%</option>
-                            </select>
-                        </div>
-                        <div class="count-badge">符合：<span id="count_Strat32">0</span> 檔</div>
-                    </div>
-                    <div class="table-container">{html_tb32}</div>
-                </div>
-                <div id="sub_strat25" class="sub-tab-content">
-                    <div class="info-box"><p>🎯 千張大戶 &ge; 60% ＋ 5MA>20MA ＋ 出量1.5倍 ＋ 漲幅3%~25%起漲區 ＋ 法人無賣壓。</p><div class="count-badge">符合：{len(res25)} 檔</div></div>
-                    <div class="table-container">{html_tb25}</div>
-                </div>
-                <div id="sub_strat24" class="sub-tab-content">
-                    <div class="info-box"><p>🎯 複製過去10天暴漲40%主力特徵：鎖定近10日漲幅 5%~25%、近5日紅盤&ge;4天、今日出量&ge;1.2倍、大戶高鎖碼。</p><div class="count-badge">符合：{len(res24)} 檔</div></div>
-                    <div class="table-container">{html_tb24}</div>
-                </div>
-            </div>
-
-            <!-- 7. 法人動能 -->
-            <div id="Tab_Inst" class="tabcontent">
-                <div class="module-nav-box">
-                    <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇法人籌碼行為：</span>
-                    <select class="custom-select" onchange="switchSubTab('Tab_Inst', this.value)">
-                        <option value="sub_strat20" selected>20. 外資連三日買超且越買越多</option>
-                        <option value="sub_strat3">3. 最新日量增 ＋ 投信不賣 ＋ 外資連買</option>
-                        <option value="sub_strat5">5. 旱地拔蔥 (前6天法人0，今日突大買)</option>
-                    </select>
-                </div>
-                <div id="sub_strat20" class="sub-tab-content" style="display:block;">
-                    <div class="info-box"><p>🎯 外資連三日買超且買超張數遞增 (越買越多) | 最新一日出量 (&ge; 1.2倍) | 股價收紅。</p><div class="count-badge">符合：{len(res20)} 檔</div></div>
-                    <div class="table-container">{html_tb20}</div>
-                </div>
-                <div id="sub_strat3" class="sub-tab-content">
-                    <div class="info-box"><p>🎯 最新日量增、投信七日不賣出、外資連續買超。</p><div class="count-badge">符合：{len(res3)} 檔</div></div>
-                    <div class="table-container">{html_tb3}</div>
-                </div>
-                <div id="sub_strat5" class="sub-tab-content">
-                    <div class="info-box"><p>🎯 旱地拔蔥 (前6天法人0，今日突介入)。</p><div class="count-badge">符合：{len(res5)} 檔</div></div>
-                    <div class="table-container">{html_tb5}</div>
-                </div>
-            </div>
-
-            <!-- 8. 上櫃強勢 -->
-            <div id="Tab_OTC" class="tabcontent">
-                <div class="module-nav-box">
-                    <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇上櫃強勢型態：</span>
-                    <select class="custom-select" onchange="switchSubTab('Tab_OTC', this.value)">
-                        <option value="sub_strat11" selected>11. 上櫃實體紅 K 強勢股 (收盤大於開盤)</option>
-                        <option value="sub_strat10">10. 上櫃收盤強勢股 (收盤漲幅排行)</option>
-                    </select>
-                </div>
-                <div id="sub_strat11" class="sub-tab-content" style="display:block;">
-                    <div class="info-box"><p>🎯 限定上櫃股票 | 實體紅K強勢股 (收盤大於開盤)。</p><div class="count-badge">符合：{len(res11)} 檔</div></div>
-                    <div class="table-container">{html_tb11}</div>
-                </div>
-                <div id="sub_strat10" class="sub-tab-content">
-                    <div class="info-box"><p>🎯 限定上櫃股票 | 最新收盤漲幅排行。</p><div class="count-badge">符合：{len(res10)} 檔</div></div>
-                    <div class="table-container">{html_tb10}</div>
-                </div>
-            </div>
-
-            <!-- 9. 量化回測總覽 -->
-            <div id="Tab_Backtest" class="tabcontent">
-                <div class="module-nav-box">
-                    <span style="font-size:12px; font-weight:700; color:var(--primary);">🎯 選擇回測研究模組：</span>
-                    <select class="custom-select" onchange="switchSubTab('Tab_Backtest', this.value)">
-                        <option value="sub_strat26" selected>26. 9 月三策略組合挖掘 (10/1~10/8 績效)</option>
-                        <option value="sub_strat21">21. 過去 30 天各策略隔日勝率回測</option>
-                    </select>
-                </div>
-                <div id="sub_strat26" class="sub-tab-content" style="display:block;">
-                    <div class="info-box"><p>🎯 回測 2026/09/01～2026/09/30 期間任三策略同時命中之個股，以 <b>10/01 開盤至 10/08 收盤</b> 計算實際績效，依上漲機率（勝率）最高前五名搭配自動建構策略 27~31。</p><div class="count-badge">📊 969 組三策略搭配排序總覽</div></div>
-                    <div class="table-container">{html_tb26}</div>
-                </div>
-                <div id="sub_strat21" class="sub-tab-content">
-                    <div class="info-box"><p>🎯 統計各策略在過去 30 個交易日內選出的個股，在「隔天收盤為紅盤」的歷史機率與平均漲跌幅度。</p><div class="count-badge">📊 依上漲勝率排行</div></div>
-                    <div class="table-container">{html_tb21}</div>
-                </div>
-            </div>
+            <!-- 各策略動態產生的明細頁面 -->
+            {pages_html_blocks}
         </div>
 
         <script>
@@ -1940,10 +1738,11 @@ def main():
                 localStorage.setItem(FAV_KEY, JSON.stringify(favs));
             }}
 
-            function updateFavEmptyState() {{
+            function updateFavUI() {{
                 const favs = getFavorites();
                 const msg = document.getElementById('fav-empty-msg');
                 const tbl = document.getElementById('fav-table');
+                
                 if(msg && tbl) {{
                     if(favs.length === 0) {{
                         msg.style.display = 'block';
@@ -1956,23 +1755,51 @@ def main():
                 
                 const cnt = document.getElementById('count_Tab_Favorites');
                 if(cnt) cnt.innerText = favs.length;
-            }}
 
-            function restoreFavorites() {{
-                const favs = getFavorites();
+                const quickCnt = document.getElementById('fav-count');
+                if(quickCnt) quickCnt.innerText = favs.length;
+
                 document.querySelectorAll('.fav-star').forEach(star => {{
                     const code = star.dataset.code;
+                    const tr = star.closest('tr');
                     if (favs.includes(code)) {{
                         star.classList.add('active');
                         star.innerHTML = '★';
-                        star.closest('tr').classList.add('row-favorite');
+                        if(tr) tr.classList.add('row-favorite');
+                    }} else {{
+                        star.classList.remove('active');
+                        star.innerHTML = '☆';
+                        if(tr) tr.classList.remove('row-favorite');
                     }}
                 }});
-                updateFavEmptyState();
-                
-                document.querySelectorAll('.styled-table tbody').forEach(tbody => {{
-                    sortTbody(tbody);
-                }});
+            }}
+
+            function showPage(pageId) {{
+                document.querySelectorAll('.page-view').forEach(el => el.style.display = 'none');
+                const target = document.getElementById(pageId);
+                if(target) {{
+                    target.style.display = 'block';
+                    window.scrollTo(0, 0);
+                }}
+            }}
+
+            function addCustomStock() {{
+                const input = document.getElementById('customCodeInput');
+                const code = input.value.trim();
+                if(!code || code.length !== 4 || isNaN(code)) {{
+                    alert('請輸入有效的 4 位數股票代號！');
+                    return;
+                }}
+                let favs = getFavorites();
+                if(!favs.includes(code)) {{
+                    favs.push(code);
+                    saveFavorites(favs);
+                    updateFavUI();
+                    alert(`成功新增股票代號 ${{code}} 至我的最愛！`);
+                }} else {{
+                    alert('該股票已在最愛清單中！');
+                }}
+                input.value = '';
             }}
 
             document.addEventListener('click', function(e) {{
@@ -1983,7 +1810,6 @@ def main():
                     const star = e.target;
                     const code = star.dataset.code;
                     let favs = getFavorites();
-                    
                     const isAdding = !star.classList.contains('active');
                     
                     if (isAdding) {{
@@ -1992,77 +1818,12 @@ def main():
                         favs = favs.filter(c => c !== code);
                     }}
                     saveFavorites(favs);
-                    
-                    document.querySelectorAll(`.fav-star[data-code="${{code}}"]`).forEach(s => {{
-                        const tr = s.closest('tr');
-                        if (isAdding) {{
-                            s.classList.add('active');
-                            s.innerHTML = '★';
-                            tr.classList.add('row-favorite');
-                        }} else {{
-                            s.classList.remove('active');
-                            s.innerHTML = '☆';
-                            tr.classList.remove('row-favorite');
-                        }}
-                        sortTbody(tr.parentElement);
-                    }});
-                    
-                    updateFavEmptyState();
+                    updateFavUI();
                 }}
             }});
 
-            function openStrategy(evt, strategyName) {{
-                document.querySelectorAll(".tabcontent").forEach(el => el.style.display = "none");
-                document.querySelectorAll(".tab-btn").forEach(el => el.classList.remove("active"));
-                document.getElementById(strategyName).style.display = "block";
-                evt.currentTarget.classList.add("active");
-                evt.currentTarget.scrollIntoView({{ behavior: 'smooth', inline: 'center', block: 'nearest' }});
-            }}
-
-            function switchSubTab(parentTabId, subTargetId) {{
-                const parent = document.getElementById(parentTabId);
-                if (!parent) return;
-                parent.querySelectorAll('.sub-tab-content').forEach(el => el.style.display = 'none');
-                const target = parent.querySelector('#' + subTargetId);
-                if (target) target.style.display = 'block';
-                
-                if(subTargetId === 'sub_strat32') {{
-                    filterStrat32();
-                }}
-            }}
-
-            function filterStrat32() {{
-                let days = parseInt(document.getElementById('sel_Strat32_days').value);
-                let minRatio = parseFloat(document.getElementById('sel_Strat32_ratio').value);
-                let table = document.getElementById('sub_strat32').querySelector("table");
-                if (!table) return;
-
-                let headers = table.querySelectorAll("thead th");
-                let idx1 = -1, idx2 = -1, idx3 = -1;
-                headers.forEach((th, i) => {{
-                    if (th.innerText.includes("法人1日")) idx1 = i;
-                    if (th.innerText.includes("法人2日")) idx2 = i;
-                    if (th.innerText.includes("法人3日")) idx3 = i;
-                }});
-
-                let count = 0;
-                table.querySelectorAll("tbody tr").forEach(row => {{
-                    let cells = row.querySelectorAll("td");
-                    let val = 0;
-                    if (days === 1 && idx1 >= 0) val = parseFloat(cells[idx1].innerText);
-                    if (days === 2 && idx2 >= 0) val = parseFloat(cells[idx2].innerText);
-                    if (days === 3 && idx3 >= 0) val = parseFloat(cells[idx3].innerText);
-
-                    let show = (!isNaN(val) && val >= minRatio);
-                    row.style.display = show ? "" : "none";
-                    if(show) count++;
-                }});
-                updateVisibleCount('Strat32', count);
-            }}
-
             function sortTbody(tbody, colIndex = -1, isAscending = false) {{
                 const rows = Array.from(tbody.querySelectorAll('tr'));
-
                 rows.sort((rowA, rowB) => {{
                     const starA = rowA.querySelector('.fav-star');
                     const starB = rowB.querySelector('.fav-star');
@@ -2085,7 +1846,6 @@ def main():
                         }}
 
                         const multiplier = isAscending ? 1 : -1;
-
                         if (!isNaN(numA) && !isNaN(numB)) {{
                             return (numA - numB) * multiplier;
                         }} else {{
@@ -2094,7 +1854,6 @@ def main():
                     }}
                     return 0;
                 }});
-
                 rows.forEach(row => tbody.appendChild(row));
             }}
 
@@ -2121,35 +1880,24 @@ def main():
                 }});
             }}
 
-            function updateVisibleCount(tabId, visibleCount) {{
-                let elem = document.getElementById("count_" + tabId);
-                if(elem) elem.innerText = visibleCount;
-            }}
-
             window.addEventListener('DOMContentLoaded', () => {{
-                restoreFavorites();
+                updateFavUI();
                 enableTableSorting();
-                setTimeout(() => {{
-                    filterStrat32();
-                }}, 300);
+                document.querySelectorAll('.styled-table tbody').forEach(tbody => {{
+                    sortTbody(tbody);
+                }});
             }});
         </script>
     </body>
     </html>
     """
 
-    for code, row in res15.iterrows():
-        is_max_vol = "true" if row['創60日最大量'] else "false"
-        search_str = f"<tr>\n      <td><span class='fav-star' data-code='{code}'>☆</span></td>\n      <td>{row['市場']}</td>"
-        replace_str = f"<tr data-is-max-vol='{is_max_vol}'>\n      <td><span class='fav-star' data-code='{code}'>☆</span></td>\n      <td>{row['市場']}</td>"
-        html_content = html_content.replace(search_str, replace_str)
-
     html_filename = "index.html"
     file_path = os.path.abspath(html_filename)
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(html_content)
 
-    print(f"\n✅ 營收相關策略已完全移除！檔案已生成: {html_filename}")
+    print(f"\n✅ 手機端儀錶板與自選股頁面架構已完美生成: {html_filename}")
     if os.environ.get("GITHUB_ACTIONS") != "true":
         webbrowser.open(f"file:///{file_path}")
 

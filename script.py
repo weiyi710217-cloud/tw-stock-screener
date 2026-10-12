@@ -66,7 +66,7 @@ def intraday_check_strategy(res_df):
         print("ℹ 目前無符合「創120日新高」的監控標的。")
         return
 
-    print(f"🚀 啟動盤中即時雙策略獨立監控，準備檢查 {len(res_df)} 檔創高股...")
+    print(f"🚀 啟動盤中即時雙策略獨立監控（含 2倍成交量上限過濾），準備檢查 {len(res_df)} 檔創高股...")
     
     for _, row in res_df.iterrows():
         code = str(row['股票代號']).strip()
@@ -90,12 +90,20 @@ def intraday_check_strategy(res_df):
                 
             df_15m = stock.history(period="1d", interval="15m")
             
-            # ==========================================
-            # 策略 1：5分K & 15分K 雙時框連續收盤向上墊高
-            # ==========================================
+            # 取得 5 分K 的成交量與收盤價數據
+            v0_5m = float(df_5m['Volume'].iloc[-1]) # 最新一根 5分K 成交量
+            v1_5m = float(df_5m['Volume'].iloc[-2]) # 前一根 5分K 成交量
+            
             c0_5m = float(df_5m['Close'].iloc[-1])
             c1_5m = float(df_5m['Close'].iloc[-2])
             c2_5m = float(df_5m['Close'].iloc[-3])
+
+            # 共通防呆條件：最新一根 5分K 成交量不可超過前一根的 2 倍（避免爆量異常）
+            is_volume_safe = (v1_5m <= 0) or (v0_5m <= v1_5m * 2.0)
+
+            # ==========================================
+            # 策略 1：5分K & 15分K 雙時框連續收盤向上墊高
+            # ==========================================
             cond_5m_up = (c0_5m > c1_5m) and (c1_5m > c2_5m)
             
             cond_15m_up = False
@@ -103,9 +111,9 @@ def intraday_check_strategy(res_df):
                 c0_15m = float(df_15m['Close'].iloc[-1])
                 c1_15m = float(df_15m['Close'].iloc[-2])
                 c2_15m = float(df_15m['Close'].iloc[-3])
-                cond_15m_up = (c0_15m >= c1_15m) #and (c1_15m >= c2_15m)
+                cond_15m_up = (c0_15m > c1_15m) and (c1_15m >= c2_15m)
 
-            triggered_strategy_1 = cond_5m_up and cond_15m_up
+            triggered_strategy_1 = cond_5m_up and cond_15m_up and is_volume_safe
 
             # ==========================================
             # 策略 2：20分鐘高點不破 ＋ 最新 5分K 突破高點
@@ -116,12 +124,12 @@ def intraday_check_strategy(res_df):
             max_high_20m = float(recent_4_highs.max())
             min_close_20m = float(recent_4_closes.min())
             
-            # 過去 20 分鐘收盤沒有低於最高點的 2%（維持高檔抗跌）
-            is_holding_high = min_close_20m >= (max_high_20m * 0.98)
+            # 過去 20 分鐘收盤沒有低於最高點的 0.5%（維持高檔抗跌）
+            is_holding_high = min_close_20m >= (max_high_20m * 0.995)
             # 最新 5 分K收盤突破近 20 分鐘高點
             is_breaking_out = c0_5m > max_high_20m
             
-            triggered_strategy_2 = is_holding_high and is_breaking_out
+            triggered_strategy_2 = is_holding_high and is_breaking_out and is_volume_safe
 
             # ==========================================
             # 獨立發送通知判斷
@@ -130,14 +138,14 @@ def intraday_check_strategy(res_df):
                 msg1 = f"🚨 *【策略一：雙時框連拉通知】*\n" \
                        f"• 股票: `{name} ({code})`\n" \
                        f"• 5分K & 15分K 同步連續收盤向上墊高！\n" \
-                       f"• 最新 5分K收盤: `{c0_5m:.2f}` (前期: `{c1_5m:.2f}` ➔ `{c2_5m:.2f}`)"
+                       f"• 最新 5分K收盤: `{c0_5m:.2f}` (成交量: `{v0_5m:.0f}` / 前量: `{v1_5m:.0f}`)"
                 print(msg1)
                 send_telegram_message(msg1)
 
             if triggered_strategy_2:
                 msg2 = f"🚨 *【策略二：20分鐘高點突破通知】*\n" \
                        f"• 股票: `{name} ({code})`\n" \
-                       f"• 狀態: 20分鐘高檔抗跌後帶量向上突破！\n" \
+                       f"• 狀態: 20分鐘高檔抗跌後帶量突破（未爆量）！\n" \
                        f"• 最新 5分K收盤: `{c0_5m:.2f}` (20分高點: `{max_high_20m:.2f}`)"
                 print(msg2)
                 send_telegram_message(msg2)

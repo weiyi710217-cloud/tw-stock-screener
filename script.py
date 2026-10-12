@@ -71,12 +71,22 @@ def intraday_check_strategy(res_df):
     for _, row in res_df.iterrows():
         code = str(row['股票代號']).strip()
         name = str(row['股票名稱']).strip() if '股票名稱' in row else ""
+        market = str(row['市場']).strip() if '市場' in row else "上市"
         
-        ticker_symbol = f"{code}.TW"
+        # 根據市場自動切換 yfinance 的後綴：上市用 .TW，上櫃用 .TWO
+        suffix = ".TWO" if "上櫃" in market else ".TW"
+        ticker_symbol = f"{code}{suffix}"
+        
         try:
             stock = yf.Ticker(ticker_symbol)
             df_hist = stock.history(period="1d", interval="5m")
             
+            # 如果 .TWO 抓不到，也可以做個保險：試著用 .TW 再抓一次
+            if (df_hist is None or len(df_hist) < 3) and suffix == ".TWO":
+                ticker_symbol = f"{code}.TW"
+                stock = yf.Ticker(ticker_symbol)
+                df_hist = stock.history(period="1d", interval="5m")
+
             if df_hist is None or len(df_hist) < 3:
                 continue
                 
@@ -84,7 +94,6 @@ def intraday_check_strategy(res_df):
             c1 = float(df_hist['Close'].iloc[-2])
             c2 = float(df_hist['Close'].iloc[-3])
             
-            # 調整為大於等於或嚴格大於，依您需求
             if c0 >= c1 and c1 >= c2:
                 msg = f"🚨 *【盤中強勢連拉通知】*\n" \
                       f"• 股票: `{name} ({code})`\n" \
@@ -97,7 +106,6 @@ def intraday_check_strategy(res_df):
             time.sleep(0.5)
         except Exception as e:
             print(f"⚠ 檢查股票 {code} ({name}) 時發生錯誤: {e}")
-
 
 
 def is_valid_cache(filepath: str, min_size: int = 50) -> bool:

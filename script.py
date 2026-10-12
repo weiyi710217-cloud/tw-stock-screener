@@ -91,8 +91,8 @@ def intraday_check_strategy(res_df):
             df_15m = stock.history(period="1d", interval="15m")
             
             # 取得 5 分K 的成交量與收盤價數據
-            v0_5m = float(df_5m['Volume'].iloc[-1]) # 最新一根 5分K 成交量
-            v1_5m = float(df_5m['Volume'].iloc[-2]) # 前一根 5分K 成交量
+            v0_5m = float(df_5m['Volume'].iloc[-1]) / 100.0  # 最新一根 5分K 成交量
+            v1_5m = float(df_5m['Volume'].iloc[-2]) / 100.0  # 前一根 5分K 成交量
             
             c0_5m = float(df_5m['Close'].iloc[-1])
             c1_5m = float(df_5m['Close'].iloc[-2])

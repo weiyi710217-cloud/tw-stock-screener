@@ -61,18 +61,17 @@ def send_telegram_message(message: str):
     except Exception as e:
         print(f"⚠ Telegram 連線錯誤: {e}")
 
-def intraday_check_strategy(stock_codes):
-    if not stock_codes:
+def intraday_check_strategy(res_df):
+    if res_df is None or res_df.empty:
         print("ℹ 目前無符合「創120日新高」的監控標的。")
         return
 
-    msg22 = "🚨 *【盤中強勢連拉通知測試】*"
-    print(msg22)
-    send_telegram_message(msg22)
+    print(f"🚀 啟動盤中即時 5 分K監控，準備檢查 {len(res_df)} 檔創高股...")
     
-    print(f"🚀 啟動盤中即時 5 分K監控，準備檢查 {len(stock_codes)} 檔創高股...")
-    
-    for code in stock_codes:
+    for _, row in res_df.iterrows():
+        code = str(row['股票代號']).strip()
+        name = str(row['股票名稱']).strip() if '股票名稱' in row else ""
+        
         ticker_symbol = f"{code}.TW"
         try:
             stock = yf.Ticker(ticker_symbol)
@@ -85,10 +84,11 @@ def intraday_check_strategy(stock_codes):
             c1 = float(df_hist['Close'].iloc[-2])
             c2 = float(df_hist['Close'].iloc[-3])
             
+            # 調整為大於等於或嚴格大於，依您需求
             if c0 >= c1 and c1 >= c2:
                 msg = f"🚨 *【盤中強勢連拉通知】*\n" \
-                      f"• 股票代號: `{code}`\n" \
-                      f"• 5分K連續兩次收盤向上墊高！\n" \
+                      f"• 股票: `{name} ({code})`\n" \
+                      f"• 5分K連續收盤向上墊高！\n" \
                       f"• 最新收盤價: `{c0:.2f}`\n" \
                       f"• 前期收盤: `{c1:.2f}` ➔ `{c2:.2f}`"
                 print(msg)
@@ -96,7 +96,9 @@ def intraday_check_strategy(stock_codes):
                 
             time.sleep(0.5)
         except Exception as e:
-            print(f"⚠ 檢查股票 {code} 時發生錯誤: {e}")
+            print(f"⚠ 檢查股票 {code} ({name}) 時發生錯誤: {e}")
+
+
 
 def is_valid_cache(filepath: str, min_size: int = 50) -> bool:
     return os.path.exists(filepath) and os.path.getsize(filepath) >= min_size
@@ -2177,11 +2179,10 @@ def main():
     print(f"\n✅ 網頁已生成: {html_filename}")
 
     # 取得策略 17（創 120 日新高）的股票代號清單並執行盤中即時檢查
-    target_stocks = []
-    if 'res17' in locals() and not res17.empty and '股票代號' in res17.columns:
-        target_stocks = res17['股票代號'].tolist()
-
-    intraday_check_strategy(target_stocks)
+    if 'res17' in locals() and not res17.empty:
+        intraday_check_strategy(res17)
+    else:
+        print("ℹ 目前無 res17 資料可供監控。")
 
     if os.environ.get("GITHUB_ACTIONS") != "true":
         webbrowser.open(f"file:///{file_path}")

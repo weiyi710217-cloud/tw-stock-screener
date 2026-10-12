@@ -10,6 +10,12 @@ import pandas as pd
 import requests
 
 import warnings
+
+import yfinance as yf
+
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+
 warnings.simplefilter(action='ignore', category=pd.errors.PerformanceWarning)
 
 TWSE_HEADERS = {
@@ -2118,9 +2124,91 @@ def main():
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(html_content)
 
+
+def send_telegram_message(message: str):
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("⚠ 未設定 Telegram Token 或 Chat ID，略過發送。")
+        return
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message,
+        "parse_mode": "Markdown"
+    }
+    try:
+        resp = requests.post(url, json=payload, timeout=10)
+        if resp.status_code == 200:
+            print("📲 Telegram 訊息發送成功！")
+        else:
+            print(f"⚠ Telegram 發送失敗: {resp.text}")
+    except Exception as e:
+        print(f"⚠ Telegram 連線錯誤: {e}")
+
+def intraday_check_strategy():
+    print("🚀 啟動盤中即時股價 5 分鐘監控檢查 (針對創 120 日新高標的)...")
+    
+    # 1. 取得歷史資料以找出目前「創 120 日新高」的股票代號清單
+    try:
+        days_data, _ = get_last_n_trading_days_data(n_market=125, n_inst=1)
+        if not days_data:
+            print("⚠ 無法取得歷史資料。")
+            return
+        
+        # 簡單計算 120 日新高清單作為盤中監控標的
+        date_0, df_0 = days_data[0]
+        close_cols_120 = [col for col in df_0.columns if col.startswith('收盤價_') and 1 <= int(col.split('_')[1]) <= 120]
+        # 這裡我們直接利用程式產生的 df_merge 邏輯或直接抓取篩選結果
+        # 為了簡化，我們直接從近期表現強勢的代號中進行 yfinance 盤中 5分K 檢查
+        print("🔍 正在從 yfinance 檢查即時盤中 5 分鐘K線...")
+    except Exception as e:
+        print(f"⚠ 載入失敗: {e}")
+        return
+
+    # 示範清單：實際執行時可動態帶入所有「創120日新高」篩選出來的股票代號
+    # 例如從 res17['股票代號'].tolist() 取得
+    # watchlist = ["2330", "2618", "2317", "3231"] 
+
+    # 假設我們從 120 日新高策略 (res17) 取得代號清單
+    # 注意：res17 必須在前面已經被 build_res 或計算出來
+    target_stocks = []
+    if 'res17' in locals() and not res17.empty and '股票代號' in res17.columns:
+        watchlist = res17['股票代號'].tolist()
+    
+    print(f"🎯 盤中監控清單（來自創120日新高）：{watchlist}")
+
+    for code in watchlist:
+        ticker_symbol = f"{code}.TW"
+        try:
+            stock = yf.Ticker(ticker_symbol)
+            df_hist = stock.history(period="1d", interval="5m")
+            
+            if df_hist is None or len(df_hist) < 3:
+                continue
+                
+            # 取得最近的三根 5 分鐘收盤價
+            c0 = df_hist['Close'].iloc[-1] # 最新一根 5分K 收盤
+            c1 = df_hist['Close'].iloc[-2] # 前一根 5分K 收盤
+            c2 = df_hist['Close'].iloc[-3] # 大前一根 5分K 收盤
+            
+            # 條件：每五分鐘的收盤大於前五分鐘，連續兩次 (c0 > c1 且 c1 > c2)
+            if c0 > c1 and c1 > c2:
+                msg = f"🚨 *【盤中強勢連拉通知】*\n股票代號: `{code}`\n5分K連續兩次收盤向上墊高！\n目前收盤價: `{c0:.2f}`"
+                print(msg)
+                send_telegram_message(msg)
+        except Exception as e:
+            print(f"⚠ 檢查股票 {code} 時發生錯誤: {e}")
+
     print(f"\n✅ 策略 35 與即時篩選器已完美生成: {html_filename}")
+
+    //print(f"🎯 盤中監控清單（來自創120日新高）：{watchlist}")
+    send_telegram_message(f"🎯 盤中監控清單（來自創120日新高）：{watchlist}")
+    
     if os.environ.get("GITHUB_ACTIONS") != "true":
         webbrowser.open(f"file:///{file_path}")
+
+
+
+
 
 if __name__ == "__main__":
     main()

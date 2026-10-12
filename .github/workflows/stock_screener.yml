@@ -1,15 +1,15 @@
-name: Stock Screener and Intraday Monitor
+name: Intraday Stock Monitor
 
 on:
   schedule:
     # 台灣時間 (UTC+8) 9:15 ~ 10:00，每 5 分鐘執行一次 (週一至週五)
-    # 轉換成 UTC 時間為 1:15 ~ 2:00
+    # 對應 UTC 時間為 1:15 ~ 2:00
     - cron: '15-59/5 1 * * 1-5'
     - cron: '0 2 * * 1-5'
   workflow_dispatch: # 支援手動觸發測試
 
 jobs:
-  run-screener:
+  run-monitor:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -20,11 +20,20 @@ jobs:
         with:
           python-version: '3.11'
 
+      # 💡 共用快取設定：與盤後選股共用 stock_cache，避免重複重抓
+      - name: Cache stock data
+        uses: actions/cache@v4
+        with:
+          path: stock_cache
+          key: ${{ runner.os }}-stock-cache-${{ github.run_number }}
+          restore-keys: |
+            ${{ runner.os }}-stock-cache-
+
       - name: Install dependencies
         run: |
           pip install pandas numpy requests yfinance
 
-      - name: Run Script
+      - name: Run Intraday Check Script
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}

@@ -99,13 +99,13 @@ def intraday_check_strategy(res_df):
             c0_5m = float(df_5m['Close'].iloc[-1])
             c1_5m = float(df_5m['Close'].iloc[-2])
             c2_5m = float(df_5m['Close'].iloc[-3])
-            cond_5m = (c0_5m >= c1_5m) and (c1_5m >= c2_5m)
+            cond_5m = (c0_5m > c1_5m) and (c1_5m > c2_5m)
             
             # 15分K 條件：連續兩次收盤向上墊高
             c0_15m = float(df_15m['Close'].iloc[-1])
             c1_15m = float(df_15m['Close'].iloc[-2])
             c2_15m = float(df_15m['Close'].iloc[-3])
-            cond_15m = (c0_15m >= c1_15m) and (c1_15m >= c2_15m)
+            cond_15m = (c0_15m > c1_15m) and (c1_15m > c2_15m)
             
             # 雙重條件同時成立才發送通知
             if cond_5m and cond_15m:

@@ -2232,23 +2232,26 @@ def main():
 
     print(f"\n✅ 網頁已生成: {html_filename}")
 
-    # 取得策略 17（創 120 日新高）的股票代號清單並執行盤中即時檢查
-    if 'res17' in locals() and not res17.empty:
-        intraday_check_strategy(res17)
-    else:
-        print("ℹ 目前無 res17 資料可供監控。")
+    # 1. 收集所有想要進行盤中監控的策略結果資料框
+    target_dfs = []
+    for strat_name, df_obj in [("策略17", res17), ("策略35", res35), ("策略22", res22)]:
+        if df_obj in locals() and not df_obj.empty:
+            target_dfs.append(df_obj)
+        else:
+            print(f"ℹ 目前無 {strat_name} 資料可供監控。")
 
-    # 取得策略 35【四大維度融合】千張大戶 >= 60% ＋ 5/20/60MA 多頭發散 ＋ 成交量放大 1.2 倍 ＋ 法人籌碼穩定護盤。
-    if 'res35' in locals() and not res35.empty:
-        intraday_check_strategy(res35)
+    # 2. 合併所有策略的股票，並依照「股票代號」過濾掉重複的股票
+    if target_dfs:
+        combined_df = pd.concat(target_dfs, ignore_index=True)
+        # 移除重複代號，保留第一個出現的完整資料
+        unique_target_df = combined_df.drop_duplicates(subset=['股票代號']).reset_index(drop=True)
+        
+        print(f"🎯 合併後總共有 {len(unique_target_df)} 檔不重複的強勢標的準備進行盤中監控。")
+        
+        # 3. 執行盤中即時檢查
+        intraday_check_strategy(unique_target_df)
     else:
-        print("ℹ 目前無 res35 資料可供監控。")
-    
-    # 取得策略 22 【複合強勢】融合多項高勝率回測模組：創 5 日高 ＋ 跳空缺口 ＋ 階梯式墊高 ＋ 量能放大 ＋ 法人無賣壓
-    if 'res22' in locals() and not res22.empty:
-        intraday_check_strategy(res22)
-    else:
-        print("ℹ 目前無 res22 資料可供監控。")
+        print("ℹ 目前無任何策略資料可供盤中監控。")
 
     if os.environ.get("GITHUB_ACTIONS") != "true":
         webbrowser.open(f"file:///{file_path}")

@@ -8,14 +8,9 @@ from io import StringIO
 import numpy as np
 import pandas as pd
 import requests
-
-import warnings
-
 import yfinance as yf
 
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
-
+import warnings
 warnings.simplefilter(action='ignore', category=pd.errors.PerformanceWarning)
 
 TWSE_HEADERS = {
@@ -43,6 +38,65 @@ if not os.path.exists(CACHE_DIR):
     os.makedirs(CACHE_DIR)
 
 WARNINGS = []
+
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+
+def send_telegram_message(message: str):
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("⚠ 未設定 Telegram Token 或 Chat ID，略過發送。")
+        return
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message,
+        "parse_mode": "Markdown"
+    }
+    try:
+        resp = requests.post(url, json=payload, timeout=10)
+        if resp.status_code == 200:
+            print("📲 Telegram 訊息發送成功！")
+        else:
+            print(f"⚠ Telegram 發送失敗: {resp.text}")
+    except Exception as e:
+        print(f"⚠ Telegram 連線錯誤: {e}")
+
+def intraday_check_strategy(stock_codes):
+    if not stock_codes:
+        print("ℹ 目前無符合「創120日新高」的監控標的。")
+        return
+
+    msg22 = "🚨 *【盤中強勢連拉通知測試】*"
+    print(msg22)
+    send_telegram_message(msg22)
+    
+    print(f"🚀 啟動盤中即時 5 分K監控，準備檢查 {len(stock_codes)} 檔創高股...")
+    
+    for code in stock_codes:
+        ticker_symbol = f"{code}.TW"
+        try:
+            stock = yf.Ticker(ticker_symbol)
+            df_hist = stock.history(period="1d", interval="5m")
+            
+            if df_hist is None or len(df_hist) < 3:
+                continue
+                
+            c0 = float(df_hist['Close'].iloc[-1])
+            c1 = float(df_hist['Close'].iloc[-2])
+            c2 = float(df_hist['Close'].iloc[-3])
+            
+            if c0 > c1 and c1 > c2:
+                msg = f"🚨 *【盤中強勢連拉通知】*\n" \
+                      f"• 股票代號: `{code}`\n" \
+                      f"• 5分K連續兩次收盤向上墊高！\n" \
+                      f"• 最新收盤價: `{c0:.2f}`\n" \
+                      f"• 前期收盤: `{c1:.2f}` ➔ `{c2:.2f}`"
+                print(msg)
+                send_telegram_message(msg)
+                
+            time.sleep(0.5)
+        except Exception as e:
+            print(f"⚠ 檢查股票 {code} 時發生錯誤: {e}")
 
 def is_valid_cache(filepath: str, min_size: int = 50) -> bool:
     return os.path.exists(filepath) and os.path.getsize(filepath) >= min_size
@@ -1203,7 +1257,6 @@ def main():
     df_combos_show["中位數漲幅(%)"] = df_combos_show["中位數漲幅(%)"].apply(color_pct)
     html_tb26 = df_combos_show.to_html(index=False, classes="styled-table backtest-table sortable-table", escape=False)
 
-    # 建立策略 27~31
     top5_combos = df_combos.head(5).to_dict("records")
     strat_results_27_31 = {}
     rank_labels = ["首選", "第二", "第三", "第四", "第五"]
@@ -1247,7 +1300,6 @@ def main():
                 "samples": 0
             }
 
-    # 策略 21：單策略回測
     print("🔬 正在執行過去 30 天單策略隔日勝率回測計算...")
     backtest_funcs = [
         ("1.跳空不補", cond1_fn), ("2.連續墊高", cond2_fn), ("3.量增法人買", cond3_fn),
@@ -1293,7 +1345,6 @@ def main():
     df_strat21_show["隔日平均報酬(%)"] = df_strat21_show["隔日平均報酬(%)"].apply(color_pct)
     html_tb21 = df_strat21_show.to_html(index=False, classes="styled-table backtest-table sortable-table", escape=False)
 
-    # 策略 12: 綜合排行
     st_lists = [
         ("1.跳空", res1), ("2.墊高", res2), ("3.量增法人", res3),
         ("4.創20日高", res4), ("5.拔蔥", res5), ("6.五日高", res6),
@@ -1340,7 +1391,6 @@ def main():
     ] if not res32.empty else pd.DataFrame()
     initial_count_32 = len(initial_res32)
 
-    # 收集所有策略與詳細說明條件，用於儀錶板卡片與明細頁
     strategies_meta = [
         ("Tab_Strat12", "🌟 綜合排行", "統計所有選股策略預設條件下，累計入選次數最多的前 50 檔最強勢標的排序。", len(res12), html_tb12),
         ("Tab_Strat27", f"🎖 組合首選 (勝率 {strat_results_27_31[27]['win_rate']}%)", f"兩策略組合：{strat_results_27_31[27]['combo_name']}。歷史回測上漲勝率最高的前五名組合之一。", strat_results_27_31[27]["count"], strat_results_27_31[27]["html"]),
@@ -1368,8 +1418,6 @@ def main():
         ("Tab_Backtest21", "📊 過去30天單策略勝率", "【量化回測總覽】統計各策略在過去 30 個交易日內選出個股的「隔日收盤收紅（上漲）」歷史勝率與平均報酬。", len(df_strat21), html_tb21)
     ]
 
-
-    
     warning_html = ""
     if WARNINGS:
         unique_warns = sorted(set(WARNINGS))
@@ -2126,11 +2174,17 @@ def main():
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(html_content)
 
+    print(f"\n✅ 網頁已生成: {html_filename}")
 
-if os.environ.get("GITHUB_ACTIONS") != "true":
+    # 取得策略 17（創 120 日新高）的股票代號清單並執行盤中即時檢查
+    target_stocks = []
+    if 'res17' in locals() and not res17.empty and '股票代號' in res17.columns:
+        target_stocks = res17['股票代號'].tolist()
+
+    intraday_check_strategy(target_stocks)
+
+    if os.environ.get("GITHUB_ACTIONS") != "true":
         webbrowser.open(f"file:///{file_path}")
-
-
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,32 @@
+name: Stock Screener and Intraday Monitor
+
+on:
+  schedule:
+    # 台灣時間 (UTC+8) 9:15 ~ 10:00，每 5 分鐘執行一次 (週一至週五)
+    # 轉換成 UTC 時間為 1:15 ~ 2:00
+    - cron: '15-59/5 1 * * 1-5'
+    - cron: '0 2 * * 1-5'
+  workflow_dispatch: # 支援手動觸發測試
+
+jobs:
+  run-screener:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install pandas numpy requests yfinance
+
+      - name: Run Script
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python -u script.py

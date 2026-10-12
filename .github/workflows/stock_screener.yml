@@ -25,9 +25,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: stock_cache
-          key: ${{ runner.os }}-stock-cache-${{ github.run_number }}
+          # key 可以保留用 run_id，這樣每次寫入時會有獨一無二的新快取
+          key: stock-cache-${{ runner.os }}-${{ github.run_id }}
+          # 核心關鍵：restore-keys 必須對齊你原本 Daily Stock Screener 的前綴
           restore-keys: |
-            ${{ runner.os }}-stock-cache-
+            stock-cache-${{ runner.os }}-
 
       - name: Install dependencies
         run: |

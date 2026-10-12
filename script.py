@@ -85,7 +85,7 @@ def intraday_check_strategy(stock_codes):
             c1 = float(df_hist['Close'].iloc[-2])
             c2 = float(df_hist['Close'].iloc[-3])
             
-            if c0 > c1 and c1 > c2:
+            if c0 >= c1 and c1 >= c2:
                 msg = f"🚨 *【盤中強勢連拉通知】*\n" \
                       f"• 股票代號: `{code}`\n" \
                       f"• 5分K連續兩次收盤向上墊高！\n" \

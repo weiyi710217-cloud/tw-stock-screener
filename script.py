@@ -2149,7 +2149,12 @@ def intraday_check_strategy(stock_codes):
         print("ℹ 目前無符合「創120日新高」的監控標的。")
         return
 
-      send_telegram_message(f"🚀 啟動盤中即時 5 分K監控，準備檢查 {len(stock_codes)} 檔創高股...")  
+    #send_telegram_message(f"🚀 啟動盤中即時 5 分K監控，準備檢查 {len(stock_codes)} 檔創高股...")  
+    
+    msg22 = f"🚨 *【盤中強勢連拉通知】"
+    print(msg22)
+    send_telegram_message(msg22)
+    
     print(f"🚀 啟動盤中即時 5 分K監控，準備檢查 {len(stock_codes)} 檔創高股...")
     
     for code in stock_codes:

@@ -2234,11 +2234,13 @@ def main():
 
     # 1. 收集所有想要進行盤中監控的策略結果資料框
     target_dfs = []
-    for strat_name, df_obj in [("策略17", res17), ("策略35", res35), ("策略22", res22)]:
-        if df_obj in locals() and not df_obj.empty:
-            target_dfs.append(df_obj)
-        else:
-            print(f"ℹ 目前無 {strat_name} 資料可供監控。")
+    
+    if 'res17' in locals() and isinstance(res17, pd.DataFrame) and not res17.empty:
+        target_dfs.append(res17)
+    if 'res35' in locals() and isinstance(res35, pd.DataFrame) and not res35.empty:
+        target_dfs.append(res35)
+    if 'res22' in locals() and isinstance(res22, pd.DataFrame) and not res22.empty:
+        target_dfs.append(res22)
 
     # 2. 合併所有策略的股票，並依照「股票代號」過濾掉重複的股票
     if target_dfs:

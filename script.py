@@ -96,14 +96,14 @@ def intraday_check_strategy(res_df):
             c0_5m = float(df_5m['Close'].iloc[-1])
             c1_5m = float(df_5m['Close'].iloc[-2])
             c2_5m = float(df_5m['Close'].iloc[-3])
-            cond_5m_up = (c0_5m >= c1_5m) and (c1_5m >= c2_5m)
+            cond_5m_up = (c0_5m > c1_5m) and (c1_5m > c2_5m)
             
             cond_15m_up = False
             if df_15m is not None and len(df_15m) >= 3:
                 c0_15m = float(df_15m['Close'].iloc[-1])
                 c1_15m = float(df_15m['Close'].iloc[-2])
                 c2_15m = float(df_15m['Close'].iloc[-3])
-                cond_15m_up = (c0_15m >= c1_15m) and (c1_15m >= c2_15m)
+                cond_15m_up = (c0_15m >= c1_15m) #and (c1_15m >= c2_15m)
 
             triggered_strategy_1 = cond_5m_up and cond_15m_up
 

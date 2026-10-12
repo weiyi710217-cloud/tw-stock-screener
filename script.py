@@ -2185,7 +2185,7 @@ def intraday_check_strategy(stock_codes):
     if os.environ.get("GITHUB_ACTIONS") != "true":
         webbrowser.open(f"file:///{file_path}")
 
-　　# 取得策略 17（創 120 日新高）的股票代號清單
+# 取得策略 17（創 120 日新高）的股票代號清單
     target_stocks = []
     if 'res17' in locals() and not res17.empty and '股票代號' in res17.columns:
         target_stocks = res17['股票代號'].tolist()

@@ -1368,6 +1368,81 @@ def main():
         ("Tab_Backtest21", "📊 過去30天單策略勝率", "【量化回測總覽】統計各策略在過去 30 個交易日內選出個股的「隔日收盤收紅（上漲）」歷史勝率與平均報酬。", len(df_strat21), html_tb21)
     ]
 
+def send_telegram_message(message: str):
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("⚠ 未設定 Telegram Token 或 Chat ID，略過發送。")
+        return
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message,
+        "parse_mode": "Markdown"
+    }
+    try:
+        resp = requests.post(url, json=payload, timeout=10)
+        if resp.status_code == 200:
+            print("📲 Telegram 訊息發送成功！")
+        else:
+            print(f"⚠ Telegram 發送失敗: {resp.text}")
+    except Exception as e:
+        print(f"⚠ Telegram 連線錯誤: {e}")
+
+
+def intraday_check_strategy(stock_codes):
+    if not stock_codes:
+        print("ℹ 目前無符合「創120日新高」的監控標的。")
+        return
+
+    #send_telegram_message(f"🚀 啟動盤中即時 5 分K監控，準備檢查 {len(stock_codes)} 檔創高股...")  
+    
+    msg22 = f"🚨 *【盤中強勢連拉通知】"
+    print(msg22)
+    send_telegram_message(msg22)
+    
+    print(f"🚀 啟動盤中即時 5 分K監控，準備檢查 {len(stock_codes)} 檔創高股...")
+    
+    for code in stock_codes:
+        # 台股上市加上 .TW，上櫃理論上 yfinance 也是用 .TW（若為上櫃有時需 .TWO，此處統一以 .TW 為主）
+        ticker_symbol = f"{code}.TW"
+        try:
+            stock = yf.Ticker(ticker_symbol)
+            # 抓取當日 5 分鐘K線
+            df_hist = stock.history(period="1d", interval="5m")
+            
+            if df_hist is None or len(df_hist) < 3:
+                continue
+                
+            # 取得最近三根 5 分鐘K線的收盤價
+            c0 = float(df_hist['Close'].iloc[-1]) # 最新一根
+            c1 = float(df_hist['Close'].iloc[-2]) # 前一根
+            c2 = float(df_hist['Close'].iloc[-3]) # 大前一根
+            
+            # 條件：每五分鐘的收盤大於前五分鐘，連續兩次 (c0 > c1 且 c1 > c2)
+            if c0 > c1 and c1 > c2:
+                msg = f"🚨 *【盤中強勢連拉通知】*\n" \
+                      f"• 股票代號: `{code}`\n" \
+                      f"• 5分K連續兩次收盤向上墊高！\n" \
+                      f"• 最新收盤價: `{c0:.2f}`\n" \
+                      f"• 前期收盤: `{c1:.2f}` ➔ `{c2:.2f}`"
+                print(msg)
+                send_telegram_message(msg)
+                
+            time.sleep(0.5) # 避免請求過快被 Yahoo 暫時限速
+        except Exception as e:
+            print(f"⚠ 檢查股票 {code} 時發生錯誤: {e}")
+
+            
+    
+
+    # 取得策略 17（創 120 日新高）的股票代號清單
+    target_stocks = []
+    if 'res17' in locals() and not res17.empty and '股票代號' in res17.columns:
+        target_stocks = res17['股票代號'].tolist()
+
+    # 執行盤中即時檢查
+    intraday_check_strategy(target_stocks)
+
+    
     warning_html = ""
     if WARNINGS:
         unique_warns = sorted(set(WARNINGS))
@@ -2125,79 +2200,8 @@ def main():
         f.write(html_content)
 
 
-def send_telegram_message(message: str):
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("⚠ 未設定 Telegram Token 或 Chat ID，略過發送。")
-        return
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message,
-        "parse_mode": "Markdown"
-    }
-    try:
-        resp = requests.post(url, json=payload, timeout=10)
-        if resp.status_code == 200:
-            print("📲 Telegram 訊息發送成功！")
-        else:
-            print(f"⚠ Telegram 發送失敗: {resp.text}")
-    except Exception as e:
-        print(f"⚠ Telegram 連線錯誤: {e}")
-
-def intraday_check_strategy(stock_codes):
-    if not stock_codes:
-        print("ℹ 目前無符合「創120日新高」的監控標的。")
-        return
-
-    #send_telegram_message(f"🚀 啟動盤中即時 5 分K監控，準備檢查 {len(stock_codes)} 檔創高股...")  
-    
-    msg22 = f"🚨 *【盤中強勢連拉通知】"
-    print(msg22)
-    send_telegram_message(msg22)
-    
-    print(f"🚀 啟動盤中即時 5 分K監控，準備檢查 {len(stock_codes)} 檔創高股...")
-    
-    for code in stock_codes:
-        # 台股上市加上 .TW，上櫃理論上 yfinance 也是用 .TW（若為上櫃有時需 .TWO，此處統一以 .TW 為主）
-        ticker_symbol = f"{code}.TW"
-        try:
-            stock = yf.Ticker(ticker_symbol)
-            # 抓取當日 5 分鐘K線
-            df_hist = stock.history(period="1d", interval="5m")
-            
-            if df_hist is None or len(df_hist) < 3:
-                continue
-                
-            # 取得最近三根 5 分鐘K線的收盤價
-            c0 = float(df_hist['Close'].iloc[-1]) # 最新一根
-            c1 = float(df_hist['Close'].iloc[-2]) # 前一根
-            c2 = float(df_hist['Close'].iloc[-3]) # 大前一根
-            
-            # 條件：每五分鐘的收盤大於前五分鐘，連續兩次 (c0 > c1 且 c1 > c2)
-            if c0 > c1 and c1 > c2:
-                msg = f"🚨 *【盤中強勢連拉通知】*\n" \
-                      f"• 股票代號: `{code}`\n" \
-                      f"• 5分K連續兩次收盤向上墊高！\n" \
-                      f"• 最新收盤價: `{c0:.2f}`\n" \
-                      f"• 前期收盤: `{c1:.2f}` ➔ `{c2:.2f}`"
-                print(msg)
-                send_telegram_message(msg)
-                
-            time.sleep(0.5) # 避免請求過快被 Yahoo 暫時限速
-        except Exception as e:
-            print(f"⚠ 檢查股票 {code} 時發生錯誤: {e}")
-
-            
-    if os.environ.get("GITHUB_ACTIONS") != "true":
+if os.environ.get("GITHUB_ACTIONS") != "true":
         webbrowser.open(f"file:///{file_path}")
-
-# 取得策略 17（創 120 日新高）的股票代號清單
-    target_stocks = []
-    if 'res17' in locals() and not res17.empty and '股票代號' in res17.columns:
-        target_stocks = res17['股票代號'].tolist()
-
-    # 執行盤中即時檢查
-    intraday_check_strategy(target_stocks)
 
 
 

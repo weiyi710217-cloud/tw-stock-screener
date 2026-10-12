@@ -61,6 +61,34 @@ def send_telegram_message(message: str):
     except Exception as e:
         print(f"⚠ Telegram 連線錯誤: {e}")
 
+def intraday_strategy_mainforce_climb(df_5m):
+    """
+    策略：主力點火階梯走高（對應圖中大戶買超、價格一路穩健墊高之型態）
+    """
+    if df_5m is None or len(df_5m) < 6:
+        return False
+        
+    # 取得最近幾根 5 分K 的收盤價與成交量
+    c0 = float(df_5m['Close'].iloc[-1]) # 最新
+    c1 = float(df_5m['Close'].iloc[-2])
+    c2 = float(df_5m['Close'].iloc[-3])
+    c3 = float(df_5m['Close'].iloc[-4])
+    
+    v0 = float(df_5m['Volume'].iloc[-1]) / 100.0
+    v1 = float(df_5m['Volume'].iloc[-2]) / 100.0
+    
+    # 1. 價格呈現階梯式連續墊高（例如最近 3 根 5分K 收盤價持續向上）
+    is_step_up = (c0 > c1) and (c1 > c2) and (c2 > c3)
+    
+    # 2. 帶量但不至於瞬間爆量失控（成交量大於 0 且小於前一根的 2 倍，確保是穩健推升）
+    is_volume_healthy = (v1 <= 0) or (v0 <= v1 * 2.0)
+    
+    # 3. 漲幅限制：確保當盤中急拉時，最新價相對前一根沒有過度誇張的異常跳空
+    is_price_stable = (c0 / c1) <= 1.035 # 5分鐘內漲幅小於 3.5%
+    
+    return is_step_up and is_volume_healthy and is_price_stable
+
+
 def intraday_check_strategy(res_df):
     if res_df is None or res_df.empty:
         print("ℹ 目前無符合「創120日新高」的監控標的。")
@@ -132,6 +160,13 @@ def intraday_check_strategy(res_df):
             triggered_strategy_2 = is_holding_high and is_breaking_out and is_volume_safe
 
             # ==========================================
+            # 策略 3：主力階梯推升型態（對應大戶買超穩步走高）
+            # ==========================================
+            triggered_strategy_3 = intraday_strategy_mainforce_climb(df_5m) and is_volume_safe
+
+            
+
+            # ==========================================
             # 獨立發送通知判斷
             # ==========================================
             if triggered_strategy_1:
@@ -150,6 +185,15 @@ def intraday_check_strategy(res_df):
                 print(msg2)
                 send_telegram_message(msg2)
                 
+            if triggered_strategy_3:
+                msg3 = f"🚨 *【策略三：主力階梯推升通知】*\n" \
+                       f"• 股票: `{name} ({code})`\n" \
+                       f"• 狀態: 5分K呈現穩健階梯式墊高，主力買盤點火！\n" \
+                       f"• 最新 5分K收盤: `{c0_5m:.2f}` (成交量: `{v0_5m:.1f}張`)"
+                print(msg3)
+                send_telegram_message(msg3)
+            
+            
             time.sleep(0.5)
         except Exception as e:
             print(f"⚠ 檢查股票 {code} ({name}) 時發生錯誤: {e}")

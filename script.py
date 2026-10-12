@@ -105,7 +105,7 @@ def intraday_check_strategy(res_df):
             c0_15m = float(df_15m['Close'].iloc[-1])
             c1_15m = float(df_15m['Close'].iloc[-2])
             c2_15m = float(df_15m['Close'].iloc[-3])
-            cond_15m = (c0_15m > c1_15m) and (c1_15m > c2_15m)
+            cond_15m = (c0_15m > c1_15m) #and (c1_15m > c2_15m)
             
             # 雙重條件同時成立才發送通知
             if cond_5m and cond_15m:
@@ -2205,6 +2205,18 @@ def main():
         intraday_check_strategy(res17)
     else:
         print("ℹ 目前無 res17 資料可供監控。")
+
+    # 取得策略 35【四大維度融合】千張大戶 >= 60% ＋ 5/20/60MA 多頭發散 ＋ 成交量放大 1.2 倍 ＋ 法人籌碼穩定護盤。
+    if 'res35' in locals() and not res35.empty:
+        intraday_check_strategy(res35)
+    else:
+        print("ℹ 目前無 res35 資料可供監控。")
+    
+    # 取得策略 22 【複合強勢】融合多項高勝率回測模組：創 5 日高 ＋ 跳空缺口 ＋ 階梯式墊高 ＋ 量能放大 ＋ 法人無賣壓
+    if 'res22' in locals() and not res22.empty:
+        intraday_check_strategy(res22)
+    else:
+        print("ℹ 目前無 res22 資料可供監控。")
 
     if os.environ.get("GITHUB_ACTIONS") != "true":
         webbrowser.open(f"file:///{file_path}")

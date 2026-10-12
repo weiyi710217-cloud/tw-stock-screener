@@ -66,40 +66,54 @@ def intraday_check_strategy(res_df):
         print("ℹ 目前無符合「創120日新高」的監控標的。")
         return
 
-    print(f"🚀 啟動盤中即時 5 分K監控，準備檢查 {len(res_df)} 檔創高股...")
+    print(f"🚀 啟動盤中即時 (5分K + 15分K) 雙重監控，準備檢查 {len(res_df)} 檔創高股...")
     
     for _, row in res_df.iterrows():
         code = str(row['股票代號']).strip()
         name = str(row['股票名稱']).strip() if '股票名稱' in row else ""
         market = str(row['市場']).strip() if '市場' in row else "上市"
         
-        # 根據市場自動切換 yfinance 的後綴：上市用 .TW，上櫃用 .TWO
+        # 根據市場自動切換 yfinance 後綴：上市 .TW，上櫃 .TWO
         suffix = ".TWO" if "上櫃" in market else ".TW"
         ticker_symbol = f"{code}{suffix}"
         
         try:
             stock = yf.Ticker(ticker_symbol)
-            df_hist = stock.history(period="1d", interval="5m")
             
-            # 如果 .TWO 抓不到，也可以做個保險：試著用 .TW 再抓一次
-            if (df_hist is None or len(df_hist) < 3) and suffix == ".TWO":
-                ticker_symbol = f"{code}.TW"
-                stock = yf.Ticker(ticker_symbol)
-                df_hist = stock.history(period="1d", interval="5m")
+            # 1. 抓取 5 分鐘K線
+            df_5m = stock.history(period="1d", interval="5m")
+            if (df_5m is None or len(df_5m) < 3) and suffix == ".TWO":
+                stock = yf.Ticker(f"{code}.TW")
+                df_5m = stock.history(period="1d", interval="5m")
+                
+            # 2. 抓取 15 分鐘K線
+            df_15m = stock.history(period="1d", interval="15m")
+            if (df_15m is None or len(df_15m) < 3) and suffix == ".TWO":
+                stock = yf.Ticker(f"{code}.TW")
+                df_15m = stock.history(period="1d", interval="15m")
 
-            if df_hist is None or len(df_hist) < 3:
+            if df_5m is None or len(df_5m) < 3 or df_15m is None or len(df_15m) < 3:
                 continue
                 
-            c0 = float(df_hist['Close'].iloc[-1])
-            c1 = float(df_hist['Close'].iloc[-2])
-            c2 = float(df_hist['Close'].iloc[-3])
+            # 5分K 條件：連續兩次收盤向上墊高
+            c0_5m = float(df_5m['Close'].iloc[-1])
+            c1_5m = float(df_5m['Close'].iloc[-2])
+            c2_5m = float(df_5m['Close'].iloc[-3])
+            cond_5m = (c0_5m >= c1_5m) and (c1_5m >= c2_5m)
             
-            if c0 >= c1 and c1 >= c2:
-                msg = f"🚨 *【盤中強勢連拉通知】*\n" \
+            # 15分K 條件：連續兩次收盤向上墊高
+            c0_15m = float(df_15m['Close'].iloc[-1])
+            c1_15m = float(df_15m['Close'].iloc[-2])
+            c2_15m = float(df_15m['Close'].iloc[-3])
+            cond_15m = (c0_15m >= c1_15m) and (c1_15m >= c2_15m)
+            
+            # 雙重條件同時成立才發送通知
+            if cond_5m and cond_15m:
+                msg = f"🚨 *【盤中雙時框強勢連拉通知】*\n" \
                       f"• 股票: `{name} ({code})`\n" \
-                      f"• 5分K連續收盤向上墊高！\n" \
-                      f"• 最新收盤價: `{c0:.2f}`\n" \
-                      f"• 前期收盤: `{c1:.2f}` ➔ `{c2:.2f}`"
+                      f"• 5分K & 15分K 同步連續收盤向上墊高！\n" \
+                      f"• 5分K最新收盤: `{c0_5m:.2f}` (前期: `{c1_5m:.2f}` ➔ `{c2_5m:.2f}`)\n" \
+                      f"• 15分K最新收盤: `{c0_15m:.2f}` (前期: `{c1_15m:.2f}` ➔ `{c2_15m:.2f}`)"
                 print(msg)
                 send_telegram_message(msg)
                 

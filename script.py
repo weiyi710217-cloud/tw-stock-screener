@@ -61,6 +61,27 @@ def send_telegram_message(message: str):
     except Exception as e:
         print(f"⚠ Telegram 連線錯誤: {e}")
 
+def check_strategy_4_high_plateau(df_5m, is_volume_safe):
+    """
+    【策略四】高檔鎖碼與均價線防守突破（全日高姿態整理）
+    """
+    if df_5m is None or len(df_5m) < 8 or not is_volume_safe:
+        return False, 0.0, 0.0
+        
+    c0_5m = float(df_5m['Close'].iloc[-1])
+    recent_highs = df_5m['High'].iloc[:-1]
+    day_max_high = float(recent_highs.max())
+    
+    recent_closes = df_5m['Close'].iloc[-5:-1]
+    min_recent_close = float(recent_closes.min())
+    
+    is_high_plateau = min_recent_close >= (day_max_high * 0.985)
+    is_challenging_high = c0_5m >= (day_max_high * 0.99)
+    
+    triggered = is_high_plateau and is_challenging_high
+    return triggered, c0_5m, day_max_high
+
+
 def intraday_strategy_mainforce_climb(df_5m):
     """
     策略：主力點火階梯走高（對應圖中大戶買超、價格一路穩健墊高之型態）
@@ -193,6 +214,18 @@ def intraday_check_strategy(res_df):
                 print(msg3)
                 send_telegram_message(msg3)
             
+            
+            # ==========================================
+            # 呼叫獨立策略四：高檔鎖碼橫盤突破
+            # ==========================================
+            t4, c0_s4, day_max = check_strategy_4_high_plateau(df_5m, is_volume_safe)
+            if t4:
+                msg4 = f"🚨 *【策略四：高檔鎖碼橫盤突破通知】*\n" \
+                       f"• 股票: `{name} ({code})`\n" \
+                       f"• 狀態: 全日高姿態整理、緊貼高點不墜，準備再攻！\n" \
+                       f"• 最新 5分K收盤: `{c0_s4:.2f}` (當日高點區: `{day_max:.2f}`)"
+                print(msg4)
+                send_telegram_message(msg4)
             
             time.sleep(0.5)
         except Exception as e:

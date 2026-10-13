@@ -65,13 +65,17 @@ def send_telegram_message(message: str):
 
 def check_all_intraday_signals(df_5m, df_15m, prev_close, is_volume_safe, is_above_10d_high):
     """
-    【盤中訊號核心引擎】一次性計算共通變數，並判斷是否觸發四大策略
+    【盤中訊號核心引擎】一次性計算共通變數，並判斷是否觸發五大策略
     """
     if df_5m is None or len(df_5m) < 3 or not is_volume_safe or not is_above_10d_high:
         return [], {}
 
     c0_5m = float(df_5m['Close'].iloc[-1])
     c1_5m = float(df_5m['Close'].iloc[-2])
+    c2_5m = float(df_5m['Close'].iloc[-3])
+    
+    o0_5m = float(df_5m['Open'].iloc[-1])
+    o1_5m = float(df_5m['Open'].iloc[-2])
     
     pct_change = ((c0_5m - prev_close) / prev_close) * 100 if prev_close > 0 else 0.0
     
@@ -83,9 +87,7 @@ def check_all_intraday_signals(df_5m, df_15m, prev_close, is_volume_safe, is_abo
     signal_data = {"c0": c0_5m, "pct_change": pct_change}
 
     # 策略一：雙時框連續收盤向上墊高 (需 >= 3根)
-    c2_5m = float(df_5m['Close'].iloc[-3])
     cond_5m_up = (c0_5m > c1_5m) and (c1_5m > c2_5m)
-    
     cond_15m_up = False
     if df_15m is not None and len(df_15m) >= 3:
         c0_15m = float(df_15m['Close'].iloc[-1])
@@ -95,6 +97,13 @@ def check_all_intraday_signals(df_5m, df_15m, prev_close, is_volume_safe, is_abo
 
     if cond_5m_up and cond_15m_up:
         triggered_signals.append(1)
+        
+    # 策略五：5分K連續跳空兩次 (需 >= 3根)
+    gap1 = (o1_5m > c2_5m)
+    gap2 = (o0_5m > c1_5m)
+    strong_k = (c1_5m >= o1_5m) and (c0_5m >= o0_5m) # 確保跳空後維持紅K不軟弱
+    if gap1 and gap2 and strong_k:
+        triggered_signals.append(5)
 
     # 策略三：主力階梯推升型態 (需 >= 5根)
     if len(df_5m) >= 5:
@@ -140,14 +149,13 @@ def intraday_check_strategy(res_df, d1_s):
         print("ℹ 目前無符合的監控標的。")
         return
 
-    print(f"🚀 啟動盤中即時四大策略整合引擎偵測，準備檢查 {len(res_df)} 檔強勢股...")
+    print(f"🚀 啟動盤中即時五大策略整合引擎偵測，準備檢查 {len(res_df)} 檔強勢股...")
     
     for _, row in res_df.iterrows():
         code = str(row['股票代號']).strip()
         name = str(row['股票名稱']).strip() if '股票名稱' in row else ""
         market = str(row['市場']).strip() if '市場' in row else "上市"
         
-        # 【關鍵修復】：直接用 d1_s 精準定位昨天收盤價的欄位名稱，避免 0 的問題
         try:
             prev_close_str = str(row.get(f"{d1_s} 收盤", 0)).replace(',', '')
             prev_close = float(prev_close_str)
@@ -160,16 +168,12 @@ def intraday_check_strategy(res_df, d1_s):
         try:
             stock = yf.Ticker(ticker_symbol)
             
-            # 萬一主表真的沒數據，使用 yfinance 最穩定的 fast_info 當日昨收當作備案
             if prev_close <= 0:
-                try:
-                    prev_close = float(stock.fast_info['previousClose'])
-                except Exception:
-                    pass
+                try: prev_close = float(stock.fast_info['previousClose'])
+                except Exception: pass
 
             df_daily = stock.history(period="15d")
-            if df_daily is None or len(df_daily) < 10:
-                continue
+            if df_daily is None or len(df_daily) < 10: continue
                 
             recent_10_closes = df_daily['Close'].iloc[-11:-1] if len(df_daily) >= 11 else df_daily['Close'].iloc[:-1]
             max_10d_close = float(recent_10_closes.max())
@@ -179,16 +183,32 @@ def intraday_check_strategy(res_df, d1_s):
                 stock = yf.Ticker(f"{code}.TW")
                 df_5m = stock.history(period="1d", interval="5m")
 
-            if df_5m is None or len(df_5m) < 6:
-                continue
+            if df_5m is None or len(df_5m) < 6: continue
                 
             df_15m = stock.history(period="1d", interval="15m")
+            
+            # 抓取目前最新 K 棒數值
             current_price = float(df_5m['Close'].iloc[-1])
             is_above_10d_high = current_price > max_10d_close
 
+            # 成交量與出貨型態判定
             v0_5m = float(df_5m['Volume'].iloc[-1]) / 100.0
             v1_5m = float(df_5m['Volume'].iloc[-2]) / 100.0
-            is_volume_safe = (v1_5m <= 0) or (v0_5m <= v1_5m * 2.0)
+            
+            c0_5m = float(df_5m['Close'].iloc[-1])
+            o0_5m = float(df_5m['Open'].iloc[-1])
+            h0_5m = float(df_5m['High'].iloc[-1])
+            
+            upper_shadow = h0_5m - max(c0_5m, o0_5m)
+            body = abs(c0_5m - o0_5m)
+            
+            # 【排除爆量出貨】：避免單根無腦爆出 3 倍巨量，或出量 (>1.5倍) 且帶長上影線 (上影線>實體1.5倍)
+            is_blowoff = (v0_5m > v1_5m * 3.0) or ((v0_5m > v1_5m * 1.5) and (upper_shadow > body * 1.5))
+            
+            # 【排除量太少】：5分K單根量小於 50 張不通知，避免滑價與無流動性
+            is_liquid = v0_5m >= 50
+            
+            is_volume_safe = is_liquid and (v1_5m > 0) and not is_blowoff
 
             triggered_list, sig_data = check_all_intraday_signals(df_5m, df_15m, prev_close, is_volume_safe, is_above_10d_high)
             
@@ -198,8 +218,6 @@ def intraday_check_strategy(res_df, d1_s):
             c0_s = sig_data.get("c0")
             pct_s = sig_data.get("pct_change")
             sign = "+" if pct_s >= 0 else ""
-            
-            # 【新增】：Yahoo 奇摩股市技術分析直達連結
             yh_link = f"https://tw.stock.yahoo.com/quote/{code}/technical-analysis"
             
             if 1 in triggered_list:
@@ -240,6 +258,16 @@ def intraday_check_strategy(res_df, d1_s):
                        f"🔗 [Yahoo 線圖點此 (請手動點5分)]({yh_link})"
                 print(msg4)
                 send_telegram_message(msg4)
+                
+            if 5 in triggered_list:
+                msg5 = f"🚨 *【策略五：5分K連續雙跳空】*\n" \
+                       f"• 股票: {name} ({code})\n" \
+                       f"• 漲跌幅: `{sign}{pct_s:.2f}%` (現價: `{c0_s:.2f}`)\n" \
+                       f"• 狀態: 5分K連續兩根跳空上漲，極度強勢！\n" \
+                       f"• 成交量: `{v0_5m:.1f}張`\n" \
+                       f"🔗 [Yahoo 線圖點此 (請手動點5分)]({yh_link})"
+                print(msg5)
+                send_telegram_message(msg5)
                 
             time.sleep(0.5)
         except Exception as e:
@@ -1125,10 +1153,8 @@ def main():
     else:
         res12, html_tb12 = pd.DataFrame(), "<p style='text-align:center;'>目前無任何股票入選</p>"
 
-    # 產生各自的 HTML Table
     def get_html_tb(df_res):
-        if df_res.empty:
-            return "<p style='text-align:center;'>目前無符合股票</p>"
+        if df_res.empty: return "<p style='text-align:center;'>目前無符合股票</p>"
         valid_cols = [c for c in base_cols + ["增量倍數"] + chip_cols if c in df_res.columns]
         return apply_color_formatting(df_res[valid_cols]).to_html(index=False, classes="styled-table sortable-table", escape=False)
 

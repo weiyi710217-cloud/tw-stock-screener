@@ -157,7 +157,11 @@ def intraday_check_strategy(res_df, d1_s):
         market = str(row['市場']).strip() if '市場' in row else "上市"
         
         try:
-            prev_close_str = str(row.get(f"{d1_s} 收盤", 0)).replace(',', '')
+            # 兼容讀取：優先找策略表的日期命名，若無則找總表的 '收盤價_1'
+            val = row.get(f"{d1_s} 收盤")
+            if pd.isna(val) or val is None:
+                val = row.get("收盤價_1", 0)
+            prev_close_str = str(val).replace(',', '')
             prev_close = float(prev_close_str)
         except Exception:
             prev_close = 0.0
@@ -1424,23 +1428,33 @@ def main():
     print(f"\n✅ 網頁已生成: {html_filename}")
 
     # ==========================================
-    # 執行盤中即時檢查 (收集所有策略中的股票去重)
+    # 執行盤中即時檢查 (收集所有策略中的股票 + 自定義強制監控股)
     # ==========================================
+    
+    # 📝 【手動自定義盤中監控清單】在此輸入您想強制監控的股票代號
+    custom_watch_list = ["4912", "5508", "5483", "5465", "1563", "3631", "6277", "8171", "5291", "5426", "4961", "2464", "6271", "5426", "5426", "5426", "5426"] 
+
     target_dfs = []
-    strat_names = ['res17',  'res22', 'res25', 'res35']
+    strat_names = ['res17', 'res22',  'res25', 'res35']
     for df_name in strat_names:
         if df_name in locals() and isinstance(locals()[df_name], pd.DataFrame) and not locals()[df_name].empty:
             target_dfs.append(locals()[df_name])
             
+    # 將自選股直接從 df_merge 總表中提列出來，強制加入監控列隊
+    if custom_watch_list and 'df_merge' in locals() and not df_merge.empty:
+        custom_df = df_merge[df_merge['股票代號'].isin(custom_watch_list)].copy()
+        if not custom_df.empty:
+            target_dfs.append(custom_df)
+            print(f"📌 已將 {len(custom_df)} 檔「手動自選股」強制加入盤中監控清單！")
+
     if target_dfs:
         combined_df = pd.concat(target_dfs, ignore_index=True)
         unique_target_df = combined_df.drop_duplicates(subset=['股票代號']).reset_index(drop=True)
-        print(f"\n🎯 總計擷取 {len(unique_target_df)} 檔不重複的強勢標的，送入即時引擎監控...")
+        print(f"\n🎯 總計擷取 {len(unique_target_df)} 檔不重複的強勢標的與自選股，送入即時引擎監控...")
         
-        # 傳入 d1_s 以精確抓取真正的昨收欄位，解決 yfinance 當日判斷失準的問題
         intraday_check_strategy(unique_target_df, d1_s)
     else:
-        print("\nℹ 目前無任何策略資料可供盤中監控。")
+        print("\nℹ 目前無任何策略資料或自選股可供盤中監控。")
 
     if os.environ.get("GITHUB_ACTIONS") != "true": webbrowser.open(f"file:///{file_path}")
 

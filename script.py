@@ -1445,7 +1445,7 @@ def main():
     custom_watch_list = ["4912", "5508", "5483"] 
 
     target_dfs = []
-    strat_names = ['res1', 'res2', 'res3', 'res4', 'res6', 'res7', 'res11', 'res13', 'res15', 'res16', 'res17', 'res20', 'res22', 'res23', 'res25', 'initial_res32', 'res33', 'res34', 'res35']
+    strat_names = [ 'res17','res22', 'res25', 'res35']
     for df_name in strat_names:
         if df_name in locals() and isinstance(locals()[df_name], pd.DataFrame) and not locals()[df_name].empty:
             target_dfs.append(locals()[df_name])

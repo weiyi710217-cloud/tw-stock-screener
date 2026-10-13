@@ -61,14 +61,24 @@ def send_telegram_message(message: str):
     except Exception as e:
         print(f"⚠ Telegram 連線錯誤: {e}")
 
+
+
 def check_strategy_4_high_plateau(df_5m, is_volume_safe):
     """
-    【策略四】高檔鎖碼與均價線防守突破（全日高姿態整理）
+    【策略四】高檔鎖碼與均價線防守突破（全日高姿態整理，若已漲停則不通知）
     """
     if df_5m is None or len(df_5m) < 8 or not is_volume_safe:
         return False, 0.0, 0.0
         
     c0_5m = float(df_5m['Close'].iloc[-1])
+    c1_5m = float(df_5m['Close'].iloc[-2])
+    
+    # 檢查是否已經漲停（相較於前一根 5分K 漲幅達到 9.5% 以上，或可依您的定義調整）
+    # 如果當根已經直接鎖漲停，就不重複通知
+    price_change_pct = (c0_5m - c1_5m) / c1_5m * 100
+    if price_change_pct >= 9.5:
+        return False, 0.0, 0.0
+
     recent_highs = df_5m['High'].iloc[:-1]
     day_max_high = float(recent_highs.max())
     

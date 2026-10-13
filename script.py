@@ -65,7 +65,6 @@ def send_telegram_message(message: str):
 def check_all_intraday_signals(df_5m, df_15m, prev_close, is_volume_safe, is_above_10d_high):
     """
     【盤中訊號核心引擎】一次性計算共通變數，並判斷是否觸發四大策略
-    回傳: (觸發的策略編號清單, 共通數據字典)
     """
     if df_5m is None or len(df_5m) < 3 or not is_volume_safe or not is_above_10d_high:
         return [], {}
@@ -226,6 +225,7 @@ def intraday_check_strategy(res_df):
             time.sleep(0.5)
         except Exception as e:
             print(f"⚠ 檢查股票 {code} ({name}) 時發生錯誤: {e}")
+
 
 # ==========================================
 # 盤後資料獲取核心
@@ -949,6 +949,7 @@ def main():
         if rename_dict: res = res.rename(columns=rename_dict)
         return res
 
+    # 統一重新命名字典 (避免產生欄位重複)
     std_rename = {"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"}
     inst_rename = {**std_rename, "外資_0": "外資(T)", "外資_1": "外資(T-1)", "外資_2": "外資(T-2)", "投信_0": "投信(T)", "投信_1": "投信(T-1)", "投信_2": "投信(T-2)"}
 
@@ -972,46 +973,6 @@ def main():
     res33 = build_res(cond33_fn, ["千張大戶比例(%)", "最新漲幅(%)"], [False, False], std_rename)
     res34 = build_res(cond_new_high_pullback, ["最新漲幅(%)", "增量倍數"], [False, False], std_rename)
     res35 = build_res(cond_super_bull_strategy, ["千張大戶比例(%)", "最新漲幅(%)"], [False, False], std_rename)
-
-    # === 打標籤與合併 ===
-    if 'res1' in locals() and not res1.empty: res1['觸發型態'] = '跳空不補'
-    if 'res2' in locals() and not res2.empty: res2['觸發型態'] = '階梯墊高'
-    if 'res3' in locals() and not res3.empty: res3['觸發型態'] = '投信外資聯手'
-    if 'res4' in locals() and not res4.empty: res4['觸發型態'] = '創20日高'
-    if 'res6' in locals() and not res6.empty: res6['觸發型態'] = '創5日高'
-    if 'res7' in locals() and not res7.empty: res7['觸發型態'] = '底底高'
-    if 'res11' in locals() and not res11.empty: res11['觸發型態'] = '實體紅K'
-    if 'res13' in locals() and not res13.empty: res13['觸發型態'] = '逼近60日高'
-    if 'res15' in locals() and not res15.empty: res15['觸發型態'] = '壓縮突破60日'
-    if 'res16' in locals() and not res16.empty: res16['觸發型態'] = '突破60日最大量'
-    if 'res17' in locals() and not res17.empty: res17['觸發型態'] = '創120日高'
-    if 'res20' in locals() and not res20.empty: res20['觸發型態'] = '外資連買'
-    if 'res22' in locals() and not res22.empty: res22['觸發型態'] = '高勝率複合'
-    if 'res23' in locals() and not res23.empty: res23['觸發型態'] = '突破10日最大量'
-    if 'res25' in locals() and not res25.empty: res25['觸發型態'] = '倚強科模式'
-    if 'initial_res32' in locals() and not initial_res32.empty: initial_res32['觸發型態'] = '大戶集中'
-    if 'res33' in locals() and not res33.empty: res33['觸發型態'] = '絕對鎖碼'
-    if 'res34' in locals() and not res34.empty: res34['觸發型態'] = '回檔再攻'
-    if 'res35' in locals() and not res35.empty: res35['觸發型態'] = '主升段基因'
-
-    def merge_strategies(df_list, sort_by="最新漲幅(%)"):
-        valid_dfs = [df for df in df_list if isinstance(df, pd.DataFrame) and not df.empty]
-        if not valid_dfs:
-            return pd.DataFrame(), "<p style='text-align:center;'>目前無符合股票</p>"
-        merged = pd.concat(valid_dfs, ignore_index=True)
-        merged['觸發型態'] = merged.groupby('股票代號')['觸發型態'].transform(lambda x: ' ＋ '.join(x.unique()))
-        merged = merged.drop_duplicates(subset=['股票代號']).reset_index(drop=True)
-        if sort_by in merged.columns: merged = merged.sort_values(by=sort_by, ascending=False)
-        display_cols = ["⭐", "市場", "標的", "觸發型態"] + [c for c in base_cols if c not in ["⭐", "市場", "標的"]] + ["增量倍數"] + chip_cols
-        valid_cols = [c for c in display_cols if c in merged.columns]
-        html = apply_color_formatting(merged[valid_cols]).to_html(index=False, classes="styled-table sortable-table", escape=False)
-        return merged, html
-
-    df_trend, html_trend = merge_strategies([res17, res13, res15, res4, res7])
-    df_short, html_short = merge_strategies([res1, res2, res6, res11])
-    df_vol, html_vol     = merge_strategies([res16, res23])
-    df_chip, html_chip   = merge_strategies([res3, res20, initial_res32, res33])
-    df_gene, html_gene   = merge_strategies([res22, res25, res34, res35])
 
     print("🔬 啟動策略 26：9 月任意兩策略組合高勝率回測挖掘...")
     cand_strategies = [
@@ -1141,21 +1102,64 @@ def main():
         df_hits = pd.DataFrame([{"股票代號": k, "入選次數": v, "符合策略": ", ".join(hit_names[k])} for k, v in hit_counts.items()])
         res12 = pd.merge(df_hits, df_merge, on="股票代號", how="inner")
         res12['近7日符合次數'] = res12['入選次數'].apply(lambda x: f"命中 {x} 個策略")
-        res12 = res12.sort_values(by=["入選次數", "最新漲幅(%)"], ascending=[False, False]).head(50).rename(columns=std_rename)
+        res12 = res12.sort_values(by=["入選次數", "最新漲幅(%)"], ascending=[False, False]).rename(columns=std_rename)
         html_tb12 = apply_color_formatting(res12[base_cols + ["入選次數", "符合策略"] + chip_cols]).to_html(index=False, classes="styled-table sortable-table", escape=False)
     else:
         res12, html_tb12 = pd.DataFrame(), "<p style='text-align:center;'>目前無任何股票入選</p>"
 
-    # === 全新精簡版 8 大選單 ===
+    # 產生各自的 HTML Table
+    def get_html_tb(df_res):
+        if df_res.empty:
+            return "<p style='text-align:center;'>目前無符合股票</p>"
+        valid_cols = [c for c in base_cols + ["增量倍數"] + chip_cols if c in df_res.columns]
+        return apply_color_formatting(df_res[valid_cols]).to_html(index=False, classes="styled-table sortable-table", escape=False)
+
+    html_tb1 = get_html_tb(res1)
+    html_tb2 = get_html_tb(res2)
+    html_tb3 = get_html_tb(res3)
+    html_tb4 = get_html_tb(res4)
+    html_tb6 = get_html_tb(res6)
+    html_tb7 = get_html_tb(res7)
+    html_tb11 = get_html_tb(res11)
+    html_tb13 = get_html_tb(res13)
+    html_tb15 = get_html_tb(res15)
+    html_tb16 = get_html_tb(res16)
+    html_tb17 = get_html_tb(res17)
+    html_tb20 = get_html_tb(res20)
+    html_tb22 = get_html_tb(res22)
+    html_tb23 = get_html_tb(res23)
+    html_tb25 = get_html_tb(res25)
+    html_tb32 = get_html_tb(initial_res32)
+    html_tb33 = get_html_tb(res33)
+    html_tb34 = get_html_tb(res34)
+    html_tb35 = get_html_tb(res35)
+
+    # 重新掛載原始 24 個策略分類面板
     strategies_meta = [
-        ("Tab_Strat12", "🌟 綜合強勢排行", "統計所有策略累計入選次數最多的前 50 檔最強勢標的排序。", len(res12), html_tb12),
-        ("Tab_Trend", "🏆 長線波段與創高", "包含：創半年新高、逼近/壓縮突破60日高、創20日高、底底高等趨勢表態型態。", len(df_trend), html_trend),
-        ("Tab_Short", "📈 短線強勢與跳空", "包含：跳空缺口不補、階梯式墊高、創5日短高、實體紅K等極短線強勢表態。", len(df_short), html_short),
-        ("Tab_Vol", "🔥 關鍵量能突破", "包含：突破10日或60日最大量高點，成功化解套牢賣壓之發動股。", len(df_vol), html_vol),
-        ("Tab_Chip", "👑 法人與大戶鎖碼", "包含：千張大戶絕對鎖碼(>70%)、法人買盤高度集中、外資/投信連續買超點火。", len(df_chip), html_chip),
-        ("Tab_Gene", "🚀 飆股主升段基因", "包含：倚強科複製模式、創新高回檔再攻、均線多頭發散等高勝率飆股型態。", len(df_gene), html_gene),
-        ("Tab_Backtest27", "🎖 最佳勝率組合", "歷史回測表現最優異的兩大策略組合（首選與次選）。", strat_results_27_31[27]["count"] + strat_results_27_31[28]["count"], strat_results_27_31[27]["html"] + "<br><h3>組合第二</h3>" + strat_results_27_31[28]["html"]),
-        ("Tab_Backtest", "📊 策略回測實驗室", "9月份任兩策略組合回測績效與過去30天單一策略隔日勝率排行。", len(df_combos), html_tb26 + "<br><br><h3>過去30天單策略隔日勝率</h3>" + html_tb21)
+        ("Tab_Strat12", "🌟 綜合排行", "統計所有選股策略預設條件下，累計入選次數最多的前 50 檔最強勢標的排序。", len(res12), html_tb12),
+        ("Tab_Strat27", f"🎖 組合首選 (勝率 {strat_results_27_31[27]['win_rate']}%)", f"兩策略組合：{strat_results_27_31[27]['combo_name']}。歷史回測上漲勝率最高的前五名組合之一。", strat_results_27_31[27]["count"], strat_results_27_31[27]["html"]),
+        ("Tab_Strat28", f"🎖 組合第二 (勝率 {strat_results_27_31[28]['win_rate']}%)", f"兩策略組合：{strat_results_27_31[28]['combo_name']}。歷史回測表現優異的高勝率組合。", strat_results_27_31[28]["count"], strat_results_27_31[28]["html"]),
+        ("Tab_Strat17", "🏆 創 120 日半年新高", "【創高突破】最新收盤價大於過去 120 個交易日內每一天的收盤價（突破半年新高，代表中長線多頭表態）。", len(res17), html_tb17),
+        ("Tab_Strat4", "🏆 創 20 日新高 ＋ 投信不賣", "【創高突破】最新收盤價創 20 日新高 ＋ 過去 7 天投信無賣超 ＋ 當日成交量大於前一日（法人護盤創高）。", len(res4), html_tb4),
+        ("Tab_Strat6", "🏆 創 5 日高 ＋ 跳空量增", "【短線爆發】創 5 日新高 ＋ 開盤向上跳空且低點不補缺口 ＋ 成交量放大 ＋ 法人連續 3 天不賣超。", len(res6), html_tb6),
+        ("Tab_Strat7", "🏆 創 20 日新高 ＋ 底底高", "【波段強勢】創 20 日新高 ＋ 股價與低點持續墊高（底底高） ＋ 成交量放大 ＋ 法人連續 7 天無賣超。", len(res7), html_tb7),
+        ("Tab_Strat13", "🏆 逼近 60 日高 (-2%以內)", "【蓄勢待發】最新收盤價距離近 60 日最高收盤價在 -2% 以內，且當日成交量大於 500 張（即將挑戰前高）。", len(res13), html_tb13),
+        ("Tab_Strat15", "🏆 壓縮突破 60 日高", "【區間突破】收盤價創 60 日新高 ＋ 成交量放大 1.2 倍以上 ＋ 前期 60 日股價震幅小於 10%（帶量突破壓縮區）。", len(res15), html_tb15),
+        ("Tab_Strat23", "🔥 突破 10 天最大量高點", "【量價突破】最新收盤價正式站上過去 10 個交易日內成交量最大當日的最高價（消化解套賣壓）。", len(res23), html_tb23),
+        ("Tab_Strat16", "🔥 突破 60 天最大量高點", "【巨量突破】突破過去 60 天內最大成交量當日的最高價 ＋ 第一天剛突破 ＋ 外資投信近 7 天無賣出。", len(res16), html_tb16),
+        ("Tab_Strat22", "📈 高勝率基因精選", "【複合強勢】融合多項高勝率回測模組：創 5 日高 ＋ 跳空缺口 ＋ 階梯式墊高 ＋ 量能放大 ＋ 法人無賣壓。", len(res22), html_tb22),
+        ("Tab_Strat1", "📈 向上跳空不補＋連續量增", "【強勢缺口】當日最低價大於前一日收盤價（向上跳空且不回補） ＋ 成交量連續多日放大。", len(res1), html_tb1),
+        ("Tab_Strat2", "📈 階梯式墊高 ＋ 外資點火", "【步步為營】收盤價高於前一日且低點不破前一日收盤（階梯墊高） ＋ 外資連續買超點火。", len(res2), html_tb2),
+        ("Tab_Strat33", "👑 絕對鎖碼 (大戶>70%)", "【主力重壓】千張大戶持股比例 > 70% ＋ 5/20/60MA 均線多頭排列 ＋ 距離半年高點在 -5% ~ +5% 內。", len(res33), html_tb33),
+        ("Tab_Strat32", "👑 大戶鎖碼 ＋ 法人集中度", "【籌碼高度集中】千張大戶比例 >= 60% ＋ 過去 1~3 天「外資+投信」合計買超佔總成交量比例達標（20%以上）。", len(initial_res32), html_tb32),
+        ("Tab_Strat25", "👑 倚強科模式複製", "【飆股複製】千張大戶 >= 60% ＋ 5MA > 20MA 均線發散 ＋ 成交量放大 1.5 倍 ＋ 近 10 日漲幅 3%~25% 起漲區。", len(res25), html_tb25),
+        ("Tab_Strat20", "🚀 外資連三日買超且越買越多", "【外資連買加速】外資連續 3 天買超且每日買超張數遞增（越買越多） ＋ 當日成交量放大 1.2 倍 ＋ 股價收紅。", len(res20), html_tb20),
+        ("Tab_Strat3", "🚀 投信不賣 ＋ 外資連買", "【法人聯手】最新日成交量放大 ＋ 投信連續 7 天無賣超 ＋ 外資當日買超（投信鎖碼、外資助攻）。", len(res3), html_tb3),
+        ("Tab_Strat11", "🎯 上櫃實體紅 K 強勢股", "【中小型強勢】限定上櫃（OTC）股票 ＋ 當日收盤價大於開盤價（實體紅K棒）且帶有強勢表現。", len(res11), html_tb11),
+        ("Tab_Strat34", "🚀 創新高回檔再攻", "【回檔再攻】過去 20 天曾創 180 天新高 ＋ 曾回檔修正 ＋ 最近一週重回新高上下 5% 區間。", len(res34), html_tb34),
+        ("Tab_Strat35", "🚀 飆股主升段基因", "【四大維度融合】千張大戶 >= 60% ＋ 5/20/60MA 多頭發散 ＋ 成交量放大 1.2 倍 ＋ 法人籌碼穩定護盤。", len(res35), html_tb35),
+        ("Tab_Backtest26", "📊 9月任兩策略組合挖掘", "【量化回測總覽】回測 9 月份任兩策略同時命中之個股，以 10/1 開盤至 10/8 收盤計算實際績效與勝率排行。", len(df_combos), html_tb26),
+        ("Tab_Backtest21", "📊 過去30天單策略勝率", "【量化回測總覽】統計各策略在過去 30 個交易日內選出個股的「隔日收盤收紅（上漲）」歷史勝率與平均報酬。", len(df_strat21), html_tb21)
     ]
 
     warning_html = ""
@@ -1179,36 +1183,10 @@ def main():
             <div class="dash-card-badge">符合標的：<b>{count}</b> 檔 ➔</div>
         </div>
         """
-        filter_toolbar = f"""
-        <div class="filter-toolbar">
-            <div class="filter-group"><label>市場別：</label>
-                <select class="custom-select filter-market" onchange="applyFilters('{tab_id}')">
-                    <option value="all" selected>全部</option><option value="上市">僅上市</option><option value="上櫃">僅上櫃</option>
-                </select>
-            </div>
-            <div class="filter-group"><label>外資狀態：</label>
-                <select class="custom-select filter-foreign" onchange="applyFilters('{tab_id}')">
-                    <option value="all" selected>無限制</option><option value="ge0">近七日不賣 (>=0)</option><option value="ge100">大舉買超 (>100張)</option>
-                </select>
-            </div>
-            <div class="filter-group"><label>投信狀態：</label>
-                <select class="custom-select filter-trust" onchange="applyFilters('{tab_id}')">
-                    <option value="all" selected>無限制</option><option value="ge0">近七日不賣 (>=0)</option><option value="ge50">積極認養 (>50張)</option>
-                </select>
-            </div>
-            <div class="filter-group"><label>千張大戶：</label>
-                <select class="custom-select filter-whale" onchange="applyFilters('{tab_id}')">
-                    <option value="all" selected>無限制</option><option value="ge40">籌碼集中 (>40%)</option><option value="ge60">高度鎖碼 (>60%)</option><option value="ge70">絕對重壓 (>70%)</option>
-                </select>
-            </div>
-        </div>
-        """ if "Backtest" not in tab_id and "Strat12" not in tab_id else ""
-
         pages_html_blocks += f"""
         <div id="{tab_id}" class="page-view" style="display:none;">
             <div class="sub-header"><button class="back-btn" onclick="showPage('Dashboard')">⬅ 返回</button><h2>{title}</h2></div>
             <div class="info-box"><p>🎯 <b>說明：</b> {desc}</p><div class="count-badge">符合：<span id="count_{tab_id}">{count}</span> 檔</div></div>
-            {filter_toolbar}
             <div class="table-container">{tbl_html}</div>
         </div>
         """
@@ -1237,10 +1215,6 @@ def main():
             .sub-header {{ display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }}
             .back-btn {{ background: #e2e8f0; border: none; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; color: var(--text); }}
             .sub-header h2 {{ margin: 0; font-size: 15px; color: var(--primary); }}
-            .filter-toolbar {{ background: white; border: 1px solid var(--border); padding: 8px 12px; border-radius: 8px; margin-bottom: 8px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; font-size: 11px; }}
-            .filter-group {{ display: flex; align-items: center; gap: 4px; }}
-            .filter-group label {{ font-weight: 600; color: var(--text-muted); }}
-            .custom-select {{ padding: 4px 8px; font-size: 11px; font-weight: 600; border-radius: 6px; border: 1px solid #cbd5e1; background-color: white; color: var(--text); outline: none; }}
             .add-stock-box {{ background: white; border: 1px solid var(--border); padding: 10px; border-radius: 8px; margin-bottom: 10px; display: flex; gap: 8px; }}
             .add-stock-input {{ flex: 1; padding: 6px 10px; font-size: 12px; border: 1px solid #cbd5e1; border-radius: 6px; outline: none; }}
             .add-stock-btn {{ background: var(--primary); color: white; border: none; padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; }}
@@ -1292,7 +1266,7 @@ def main():
         <div class="container">
             {warning_html}
             <div id="Dashboard" class="page-view">
-                <div class="info-box"><p>🎯 <b>行動端儀錶板：</b> 點擊下方任意卡片進入明細，並可使用外資、投信、大戶即時篩選器。</p></div>
+                <div class="info-box"><p>🎯 <b>行動端儀錶板：</b> 點擊下方任意卡片進入策略明細。</p></div>
                 <div class="dash-grid">{dashboard_cards_html}</div>
             </div>
             <div id="Tab_Favorites" class="page-view" style="display:none;">
@@ -1350,45 +1324,6 @@ def main():
                 if(!favs.includes(code)) {{ favs.push(code); saveFavorites(favs); updateFavUI(); alert(`成功新增 ${{code}}`); }}
                 else alert('該股票已在清單中！');
                 input.value = '';
-            }}
-            function applyFilters(pageId) {{
-                const page = document.getElementById(pageId); if(!page) return;
-                const table = page.querySelector('table'); if(!table) return;
-                const rows = table.querySelectorAll('tbody tr');
-                const headers = Array.from(table.querySelectorAll('thead th'));
-                const mktVal = page.querySelector('.filter-market')?.value || 'all';
-                const forVal = page.querySelector('.filter-foreign')?.value || 'all';
-                const truVal = page.querySelector('.filter-trust')?.value || 'all';
-                const whaVal = page.querySelector('.filter-whale')?.value || 'all';
-                let idxMkt = -1, idxFor = -1, idxTru = -1, idxWha = -1;
-                headers.forEach((th, idx) => {{
-                    let txt = th.innerText;
-                    if(txt.includes('市場')) idxMkt = idx;
-                    if(txt.includes('外資近七日') || txt.includes('外資')) idxFor = idx;
-                    if(txt.includes('投信近七日') || txt.includes('投信')) idxTru = idx;
-                    if(txt.includes('千張大戶')) idxWha = idx;
-                }});
-                let visibleCount = 0;
-                rows.forEach(row => {{
-                    let pass = true; let cells = row.querySelectorAll('td');
-                    if(cells.length < 5) return;
-                    if(mktVal !== 'all' && idxMkt >= 0) if(!cells[idxMkt].innerText.includes(mktVal)) pass = false;
-                    if(forVal !== 'all' && idxFor >= 0) {{
-                        let v = parseFloat(cells[idxFor].innerText.replace(/,/g, '').replace(/%/g, ''));
-                        if(!isNaN(v)) {{ if(forVal === 'ge0' && v < 0) pass = false; if(forVal === 'ge100' && v < 100) pass = false; }}
-                    }}
-                    if(truVal !== 'all' && idxTru >= 0) {{
-                        let v = parseFloat(cells[idxTru].innerText.replace(/,/g, '').replace(/%/g, ''));
-                        if(!isNaN(v)) {{ if(truVal === 'ge0' && v < 0) pass = false; if(truVal === 'ge50' && v < 50) pass = false; }}
-                    }}
-                    if(whaVal !== 'all' && idxWha >= 0) {{
-                        let v = parseFloat(cells[idxWha].innerText.replace(/,/g, '').replace(/%/g, ''));
-                        if(!isNaN(v)) {{ if(whaVal === 'ge40' && v < 40) pass = false; if(whaVal === 'ge60' && v < 60) pass = false; if(whaVal === 'ge70' && v < 70) pass = false; }}
-                    }}
-                    row.style.display = pass ? '' : 'none';
-                    if(pass) visibleCount++;
-                }});
-                const badge = page.querySelector('.count-badge span'); if(badge) badge.innerText = visibleCount;
             }}
             document.addEventListener('click', function(e) {{
                 if (e.target && e.target.classList.contains('fav-star')) {{
@@ -1448,7 +1383,7 @@ def main():
     # 執行盤中即時檢查 (收集所有策略中的股票去重)
     # ==========================================
     target_dfs = []
-    strat_names = ['res17',  'res22',  'res35']
+    strat_names = [ 'res34', 'res35']
     for df_name in strat_names:
         if df_name in locals() and isinstance(locals()[df_name], pd.DataFrame) and not locals()[df_name].empty:
             target_dfs.append(locals()[df_name])

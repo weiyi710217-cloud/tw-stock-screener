@@ -62,22 +62,32 @@ def send_telegram_message(message: str):
         print(f"⚠ Telegram 連線錯誤: {e}")
 
 
-def check_strategy_1_dual_timeframe(df_5m, df_15m, prev_close, is_volume_safe, is_above_10d_high):
+def check_all_intraday_signals(df_5m, df_15m, prev_close, is_volume_safe, is_above_10d_high):
     """
-    【策略一】5分K & 15分K 雙時框連續收盤向上墊高（需大於近10日最高收盤）
+    【盤中訊號核心引擎】一次性計算共通變數，並判斷是否觸發四大策略
+    回傳: (觸發的策略編號清單, 共通數據字典)
     """
+    # 1. 最基礎的共通防呆（只要 K 棒小於 3 根，或是量不安全、未過 10日高，全數淘汰）
     if df_5m is None or len(df_5m) < 3 or not is_volume_safe or not is_above_10d_high:
-        return False, 0.0, 0.0, 0.0, 0.0
-        
+        return [], {}
+
+    # 2. 提取共通變數（只抓一次，極大化效能）
     c0_5m = float(df_5m['Close'].iloc[-1])
     c1_5m = float(df_5m['Close'].iloc[-2])
-    c2_5m = float(df_5m['Close'].iloc[-3])
     
     pct_change = ((c0_5m - prev_close) / prev_close) * 100 if prev_close > 0 else 0.0
     
+    # 3. 共通漲停過濾（已漲停或當根暴漲鎖死，全數不通知）
     if pct_change >= 9.5 or (c0_5m - c1_5m) / c1_5m * 100 >= 9.5:
-        return False, 0.0, 0.0, 0.0, 0.0
-    
+        return [], {}
+
+    triggered_signals = []
+    signal_data = {"c0": c0_5m, "pct_change": pct_change}
+
+    # ==========================================
+    # 【策略一】雙時框連續收盤向上墊高 (需 >= 3根)
+    # ==========================================
+    c2_5m = float(df_5m['Close'].iloc[-3])
     cond_5m_up = (c0_5m > c1_5m) and (c1_5m > c2_5m)
     
     cond_15m_up = False
@@ -87,88 +97,133 @@ def check_strategy_1_dual_timeframe(df_5m, df_15m, prev_close, is_volume_safe, i
         c2_15m = float(df_15m['Close'].iloc[-3])
         cond_15m_up = (c0_15m > c1_15m) and (c1_15m > c2_15m)
 
-    triggered = cond_5m_up and cond_15m_up
-    return triggered, c0_5m, c1_5m, c2_5m, pct_change
+    if cond_5m_up and cond_15m_up:
+        triggered_signals.append(1)
 
+    # ==========================================
+    # 【策略三】主力階梯推升型態 (需 >= 5根)
+    # ==========================================
+    if len(df_5m) >= 5:
+        c3_5m = float(df_5m['Close'].iloc[-4])
+        is_step_up = cond_5m_up and (c2_5m > c3_5m) # 沿用策略一的判斷
+        is_price_stable = (c0_5m / c1_5m) <= 1.035
+        if is_step_up and is_price_stable:
+            triggered_signals.append(3)
 
-def check_strategy_2_20m_breakout(df_5m, prev_close, is_volume_safe, is_above_10d_high):
-    """
-    【策略二】20分鐘高點突破（需大於近10日最高收盤）
-    """
-    if df_5m is None or len(df_5m) < 6 or not is_volume_safe or not is_above_10d_high:
-        return False, 0.0, 0.0, 0.0
+    # ==========================================
+    # 【策略二】20分鐘高點突破 (需 >= 6根)
+    # ==========================================
+    if len(df_5m) >= 6:
+        recent_4_closes = df_5m['Close'].iloc[-5:-1]
+        recent_4_highs = df_5m['High'].iloc[-5:-1]
         
+        max_high_20m = float(recent_4_highs.max())
+        min_close_20m = float(recent_4_closes.min())
+        
+        is_holding_high = min_close_20m >= (max_high_20m * 0.99)
+        is_breaking_out = c0_5m > max_high_20m
+        if is_holding_high and is_breaking_out:
+            triggered_signals.append(2)
+            signal_data["max_h20"] = max_high_20m
+
+    # ==========================================
+    # 【策略四】高檔鎖碼橫盤突破 (需 >= 8根)
+    # ==========================================
+    if len(df_5m) >= 8:
+        recent_highs = df_5m['High'].iloc[:-1]
+        day_max_high = float(recent_highs.max())
+        
+        # 沿用策略二算好的 min_close_20m（最近20分收盤）來判斷高檔抗跌
+        is_high_plateau = min_close_20m >= (day_max_high * 0.985)
+        is_challenging_high = c0_5m >= (day_max_high * 0.99)
+        if is_high_plateau and is_challenging_high:
+            triggered_signals.append(4)
+            signal_data["day_max"] = day_max_high
+
+    return triggered_signals, signal_data
+
+def check_all_intraday_signals(df_5m, df_15m, prev_close, is_volume_safe, is_above_10d_high):
+    """
+    【盤中訊號核心引擎】一次性計算共通變數，並判斷是否觸發四大策略
+    回傳: (觸發的策略編號清單, 共通數據字典)
+    """
+    # 1. 最基礎的共通防呆（只要 K 棒小於 3 根，或是量不安全、未過 10日高，全數淘汰）
+    if df_5m is None or len(df_5m) < 3 or not is_volume_safe or not is_above_10d_high:
+        return [], {}
+
+    # 2. 提取共通變數（只抓一次，極大化效能）
     c0_5m = float(df_5m['Close'].iloc[-1])
     c1_5m = float(df_5m['Close'].iloc[-2])
     
     pct_change = ((c0_5m - prev_close) / prev_close) * 100 if prev_close > 0 else 0.0
     
+    # 3. 共通漲停過濾（已漲停或當根暴漲鎖死，全數不通知）
     if pct_change >= 9.5 or (c0_5m - c1_5m) / c1_5m * 100 >= 9.5:
-        return False, 0.0, 0.0, 0.0
+        return [], {}
 
-    recent_4_closes = df_5m['Close'].iloc[-5:-1]
-    recent_4_highs = df_5m['High'].iloc[-5:-1]
-    
-    max_high_20m = float(recent_4_highs.max())
-    min_close_20m = float(recent_4_closes.min())
-    
-    is_holding_high = min_close_20m >= (max_high_20m * 0.99)
-    is_breaking_out = c0_5m > max_high_20m
-    
-    triggered = is_holding_high and is_breaking_out
-    return triggered, c0_5m, max_high_20m, pct_change
+    triggered_signals = []
+    signal_data = {"c0": c0_5m, "pct_change": pct_change}
 
-
-def check_strategy_3_mainforce_climb(df_5m, prev_close, is_volume_safe, is_above_10d_high):
-    """
-    【策略三】主力階梯推升型態（需大於近10日最高收盤）
-    """
-    if df_5m is None or len(df_5m) < 5 or not is_volume_safe or not is_above_10d_high:
-        return False, 0.0, 0.0
-        
-    c0_5m = float(df_5m['Close'].iloc[-1])
-    c1_5m = float(df_5m['Close'].iloc[-2])
+    # ==========================================
+    # 【策略一】雙時框連續收盤向上墊高 (需 >= 3根)
+    # ==========================================
     c2_5m = float(df_5m['Close'].iloc[-3])
-    c3_5m = float(df_5m['Close'].iloc[-4])
+    cond_5m_up = (c0_5m > c1_5m) and (c1_5m > c2_5m)
     
-    pct_change = ((c0_5m - prev_close) / prev_close) * 100 if prev_close > 0 else 0.0
-    
-    if pct_change >= 9.5 or (c0_5m - c1_5m) / c1_5m * 100 >= 9.5:
-        return False, 0.0, 0.0
-    
-    is_step_up = (c0_5m > c1_5m) and (c1_5m > c2_5m) and (c2_5m > c3_5m)
-    is_price_stable = (c0_5m / c1_5m) <= 1.035
-    
-    triggered = is_step_up and is_price_stable
-    return triggered, c0_5m, pct_change
+    cond_15m_up = False
+    if df_15m is not None and len(df_15m) >= 3:
+        c0_15m = float(df_15m['Close'].iloc[-1])
+        c1_15m = float(df_15m['Close'].iloc[-2])
+        c2_15m = float(df_15m['Close'].iloc[-3])
+        cond_15m_up = (c0_15m > c1_15m) and (c1_15m > c2_15m)
 
+    if cond_5m_up and cond_15m_up:
+        triggered_signals.append(1)
 
-def check_strategy_4_high_plateau(df_5m, prev_close, is_volume_safe, is_above_10d_high):
-    """
-    【策略四】高檔鎖碼橫盤突破（需大於近10日最高收盤）
-    """
-    if df_5m is None or len(df_5m) < 8 or not is_volume_safe or not is_above_10d_high:
-        return False, 0.0, 0.0, 0.0
+    # ==========================================
+    # 【策略三】主力階梯推升型態 (需 >= 5根)
+    # ==========================================
+    if len(df_5m) >= 5:
+        c3_5m = float(df_5m['Close'].iloc[-4])
+        is_step_up = cond_5m_up and (c2_5m > c3_5m) # 沿用策略一的判斷
+        is_price_stable = (c0_5m / c1_5m) <= 1.035
+        if is_step_up and is_price_stable:
+            triggered_signals.append(3)
+
+    # ==========================================
+    # 【策略二】20分鐘高點突破 (需 >= 6根)
+    # ==========================================
+    if len(df_5m) >= 6:
+        recent_4_closes = df_5m['Close'].iloc[-5:-1]
+        recent_4_highs = df_5m['High'].iloc[-5:-1]
         
-    c0_5m = float(df_5m['Close'].iloc[-1])
-    c1_5m = float(df_5m['Close'].iloc[-2])
-    
-    pct_change = ((c0_5m - prev_close) / prev_close) * 100 if prev_close > 0 else 0.0
-    
-    if pct_change >= 9.5 or (c0_5m - c1_5m) / c1_5m * 100 >= 9.5:
-        return False, 0.0, 0.0, 0.0
+        max_high_20m = float(recent_4_highs.max())
+        min_close_20m = float(recent_4_closes.min())
+        
+        is_holding_high = min_close_20m >= (max_high_20m * 0.99)
+        is_breaking_out = c0_5m > max_high_20m
+        if is_holding_high and is_breaking_out:
+            triggered_signals.append(2)
+            signal_data["max_h20"] = max_high_20m
 
-    recent_highs = df_5m['High'].iloc[:-1]
-    day_max_high = float(recent_highs.max())
-    
-    recent_closes = df_5m['Close'].iloc[-5:-1]
-    min_recent_close = float(recent_closes.min())
-    
-    is_high_plateau = min_recent_close >= (day_max_high * 0.985)
-    is_challenging_high = c0_5m >= (day_max_high * 0.99)
-    
-    triggered = is_high_plateau and is_challenging_high
-    return triggered, c0_5m, day_max_high, pct_change
+    # ==========================================
+    # 【策略四】高檔鎖碼橫盤突破 (需 >= 8根)
+    # ==========================================
+    if len(df_5m) >= 8:
+        recent_highs = df_5m['High'].iloc[:-1]
+        day_max_high = float(recent_highs.max())
+        
+        # 直接在此重新抓取最近 4 根收盤價來判斷抗跌
+        recent_closes_4 = df_5m['Close'].iloc[-5:-1]
+        min_recent_close_4 = float(recent_closes_4.min())
+        
+        is_high_plateau = min_recent_close_4 >= (day_max_high * 0.985)
+        is_challenging_high = c0_5m >= (day_max_high * 0.99)
+        if is_high_plateau and is_challenging_high:
+            triggered_signals.append(4)
+            signal_data["day_max"] = day_max_high
+
+    return triggered_signals, signal_data
 
 
 def intraday_check_strategy(res_df):
@@ -176,13 +231,14 @@ def intraday_check_strategy(res_df):
         print("ℹ 目前無符合的監控標的。")
         return
 
-    print(f"🚀 啟動盤中即時四大策略獨立偵測（含近10日新高過濾與漲停過濾），準備檢查 {len(res_df)} 檔強勢股...")
+    print(f"🚀 啟動盤中即時四大策略整合引擎偵測，準備檢查 {len(res_df)} 檔強勢股...")
     
     for _, row in res_df.iterrows():
         code = str(row['股票代號']).strip()
         name = str(row['股票名稱']).strip() if '股票名稱' in row else ""
         market = str(row['市場']).strip() if '市場' in row else "上市"
         
+        # 取得盤前資料中的昨日收盤價（若無則用 0，後續再透過 yfinance 補齊）
         prev_close = float(row.get('收盤價_1', 0))
         
         suffix = ".TWO" if "上櫃" in market else ".TW"
@@ -224,65 +280,54 @@ def intraday_check_strategy(res_df):
             v1_5m = float(df_5m['Volume'].iloc[-2]) / 100.0
             is_volume_safe = (v1_5m <= 0) or (v0_5m <= v1_5m * 2.0)
 
-            # ------------------------------------------
-            # 策略一檢查
-            # ------------------------------------------
-            t1, c0_s1, c1_s1, c2_s1, pct1 = check_strategy_1_dual_timeframe(df_5m, df_15m, prev_close, is_volume_safe, is_above_10d_high)
-            if t1:
-                sign = "+" if pct1 >= 0 else ""
+            # 呼叫核心引擎，一次驗證所有策略
+            triggered_list, sig_data = check_all_intraday_signals(df_5m, df_15m, prev_close, is_volume_safe, is_above_10d_high)
+            
+            if not triggered_list:
+                continue # 完全沒有觸發任何策略，直接換下一檔
+                
+            c0_s = sig_data.get("c0")
+            pct_s = sig_data.get("pct_change")
+            sign = "+" if pct_s >= 0 else ""
+            
+            if 1 in triggered_list:
                 msg1 = f"🚨 *【策略一：雙時框連拉通知】*\n" \
                        f"• 股票: `{name} ({code})`\n" \
-                       f"• 目前漲跌幅: `{sign}{pct1:.2f}%` (現價: `{c0_s1:.2f}`)\n" \
-                       f"• 狀態: 突破近10日最高收盤 (`{max_10d_close:.2f}`) 且雙時框向上！\n" \
+                       f"• 漲跌幅: `{sign}{pct_s:.2f}%` (現價: `{c0_s:.2f}`)\n" \
+                       f"• 狀態: 突破10日高且雙時框向上！\n" \
                        f"• 成交量: `{v0_5m:.1f}張`"
                 print(msg1)
                 send_telegram_message(msg1)
 
-            # ------------------------------------------
-            # 策略二檢查
-            # ------------------------------------------
-            t2, c0_s2, max_h20, pct2 = check_strategy_2_20m_breakout(df_5m, prev_close, is_volume_safe, is_above_10d_high)
-            if t2:
-                sign = "+" if pct2 >= 0 else ""
-                msg2 = f"🚨 *【策略二：20分鐘高點突破通知】*\n" \
+            if 2 in triggered_list:
+                msg2 = f"🚨 *【策略二：20分鐘高點突破】*\n" \
                        f"• 股票: `{name} ({code})`\n" \
-                       f"• 目前漲跌幅: `{sign}{pct2:.2f}%` (現價: `{c0_s2:.2f}`)\n" \
-                       f"• 狀態: 突破近10日最高收盤 (`{max_10d_close:.2f}`) 且20分高點突破！"
+                       f"• 漲跌幅: `{sign}{pct_s:.2f}%` (現價: `{c0_s:.2f}`)\n" \
+                       f"• 狀態: 高檔抗跌後帶量突破！\n" \
+                       f"• 20分高點: `{sig_data.get('max_h20'):.2f}`"
                 print(msg2)
                 send_telegram_message(msg2)
 
-            # ------------------------------------------
-            # 策略三檢查
-            # ------------------------------------------
-            t3, c0_s3, pct3 = check_strategy_3_mainforce_climb(df_5m, prev_close, is_volume_safe, is_above_10d_high)
-            if t3:
-                sign = "+" if pct3 >= 0 else ""
-                msg3 = f"🚨 *【策略三：主力階梯推升通知】*\n" \
+            if 3 in triggered_list and 1 not in triggered_list: 
+                msg3 = f"🚨 *【策略三：主力階梯推升】*\n" \
                        f"• 股票: `{name} ({code})`\n" \
-                       f"• 目前漲跌幅: `{sign}{pct3:.2f}%` (現價: `{c0_s3:.2f}`)\n" \
-                       f"• 狀態: 突破近10日最高收盤 (`{max_10d_close:.2f}`) 且階梯式墊高！"
+                       f"• 漲跌幅: `{sign}{pct_s:.2f}%` (現價: `{c0_s:.2f}`)\n" \
+                       f"• 狀態: 階梯式穩健墊高，主力點火！"
                 print(msg3)
                 send_telegram_message(msg3)
 
-            # ------------------------------------------
-            # 策略四檢查
-            # ------------------------------------------
-            t4, c0_s4, day_max, pct4 = check_strategy_4_high_plateau(df_5m, prev_close, is_volume_safe, is_above_10d_high)
-            if t4:
-                sign = "+" if pct4 >= 0 else ""
-                msg4 = f"🚨 *【策略四：高檔鎖碼橫盤突破通知】*\n" \
+            if 4 in triggered_list and 2 not in triggered_list:
+                msg4 = f"🚨 *【策略四：全日高檔鎖碼突破】*\n" \
                        f"• 股票: `{name} ({code})`\n" \
-                       f"• 目前漲跌幅: `{sign}{pct4:.2f}%` (現價: `{c0_s4:.2f}`)\n" \
-                       f"• 狀態: 突破近10日最高收盤 (`{max_10d_close:.2f}`) 且高檔鎖碼橫盤！"
+                       f"• 漲跌幅: `{sign}{pct_s:.2f}%` (現價: `{c0_s:.2f}`)\n" \
+                       f"• 狀態: 全日高姿態整理，準備再攻！\n" \
+                       f"• 當日高點: `{sig_data.get('day_max'):.2f}`"
                 print(msg4)
                 send_telegram_message(msg4)
                 
             time.sleep(0.5)
         except Exception as e:
             print(f"⚠ 檢查股票 {code} ({name}) 時發生錯誤: {e}")
-
-
-
 
 def is_valid_cache(filepath: str, min_size: int = 50) -> bool:
     return os.path.exists(filepath) and os.path.getsize(filepath) >= min_size

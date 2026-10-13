@@ -51,7 +51,8 @@ def send_telegram_message(message: str):
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": message,
-        "parse_mode": "Markdown"
+        "parse_mode": "Markdown",
+        "disable_web_page_preview": True # 避免連結展開佔用大版面
     }
     try:
         resp = requests.post(url, json=payload, timeout=10)
@@ -133,7 +134,8 @@ def check_all_intraday_signals(df_5m, df_15m, prev_close, is_volume_safe, is_abo
 
     return triggered_signals, signal_data
 
-def intraday_check_strategy(res_df):
+
+def intraday_check_strategy(res_df, d1_s):
     if res_df is None or res_df.empty:
         print("ℹ 目前無符合的監控標的。")
         return
@@ -145,19 +147,29 @@ def intraday_check_strategy(res_df):
         name = str(row['股票名稱']).strip() if '股票名稱' in row else ""
         market = str(row['市場']).strip() if '市場' in row else "上市"
         
-        prev_close = float(row.get('收盤價_1', 0))
+        # 【關鍵修復】：直接用 d1_s 精準定位昨天收盤價的欄位名稱，避免 0 的問題
+        try:
+            prev_close_str = str(row.get(f"{d1_s} 收盤", 0)).replace(',', '')
+            prev_close = float(prev_close_str)
+        except Exception:
+            prev_close = 0.0
+            
         suffix = ".TWO" if "上櫃" in market else ".TW"
         ticker_symbol = f"{code}{suffix}"
         
         try:
             stock = yf.Ticker(ticker_symbol)
             
+            # 萬一主表真的沒數據，使用 yfinance 最穩定的 fast_info 當日昨收當作備案
+            if prev_close <= 0:
+                try:
+                    prev_close = float(stock.fast_info['previousClose'])
+                except Exception:
+                    pass
+
             df_daily = stock.history(period="15d")
             if df_daily is None or len(df_daily) < 10:
                 continue
-                
-            if prev_close <= 0:
-                prev_close = float(df_daily['Close'].iloc[-2])
                 
             recent_10_closes = df_daily['Close'].iloc[-11:-1] if len(df_daily) >= 11 else df_daily['Close'].iloc[:-1]
             max_10d_close = float(recent_10_closes.max())
@@ -187,45 +199,51 @@ def intraday_check_strategy(res_df):
             pct_s = sig_data.get("pct_change")
             sign = "+" if pct_s >= 0 else ""
             
+            # 【新增】：Yahoo 奇摩股市技術分析直達連結
+            yh_link = f"https://tw.stock.yahoo.com/quote/{code}/technical-analysis"
+            
             if 1 in triggered_list:
-                msg1 = f"🚨 *【策略一：雙時框連拉通知】*\n" \
-                       f"• 股票: `{name} ({code})`\n" \
+                msg1 = f"🚨 *【策略一：雙時框連拉】*\n" \
+                       f"• 股票: {name} ({code})\n" \
                        f"• 漲跌幅: `{sign}{pct_s:.2f}%` (現價: `{c0_s:.2f}`)\n" \
                        f"• 狀態: 突破10日高且雙時框向上！\n" \
-                       f"• 成交量: `{v0_5m:.1f}張`"
+                       f"• 成交量: `{v0_5m:.1f}張`\n" \
+                       f"🔗 [Yahoo 線圖點此 (請手動點5分)]({yh_link})"
                 print(msg1)
                 send_telegram_message(msg1)
 
             if 2 in triggered_list:
                 msg2 = f"🚨 *【策略二：20分鐘高點突破】*\n" \
-                       f"• 股票: `{name} ({code})`\n" \
+                       f"• 股票: {name} ({code})\n" \
                        f"• 漲跌幅: `{sign}{pct_s:.2f}%` (現價: `{c0_s:.2f}`)\n" \
                        f"• 狀態: 高檔抗跌後帶量突破！\n" \
-                       f"• 20分高點: `{sig_data.get('max_h20'):.2f}`"
+                       f"• 20分高點: `{sig_data.get('max_h20'):.2f}`\n" \
+                       f"🔗 [Yahoo 線圖點此 (請手動點5分)]({yh_link})"
                 print(msg2)
                 send_telegram_message(msg2)
 
             if 3 in triggered_list and 1 not in triggered_list: 
                 msg3 = f"🚨 *【策略三：主力階梯推升】*\n" \
-                       f"• 股票: `{name} ({code})`\n" \
+                       f"• 股票: {name} ({code})\n" \
                        f"• 漲跌幅: `{sign}{pct_s:.2f}%` (現價: `{c0_s:.2f}`)\n" \
-                       f"• 狀態: 階梯式穩健墊高，主力點火！"
+                       f"• 狀態: 階梯式穩健墊高，主力點火！\n" \
+                       f"🔗 [Yahoo 線圖點此 (請手動點5分)]({yh_link})"
                 print(msg3)
                 send_telegram_message(msg3)
 
             if 4 in triggered_list and 2 not in triggered_list:
                 msg4 = f"🚨 *【策略四：全日高檔鎖碼突破】*\n" \
-                       f"• 股票: `{name} ({code})`\n" \
+                       f"• 股票: {name} ({code})\n" \
                        f"• 漲跌幅: `{sign}{pct_s:.2f}%` (現價: `{c0_s:.2f}`)\n" \
                        f"• 狀態: 全日高姿態整理，準備再攻！\n" \
-                       f"• 當日高點: `{sig_data.get('day_max'):.2f}`"
+                       f"• 當日高點: `{sig_data.get('day_max'):.2f}`\n" \
+                       f"🔗 [Yahoo 線圖點此 (請手動點5分)]({yh_link})"
                 print(msg4)
                 send_telegram_message(msg4)
                 
             time.sleep(0.5)
         except Exception as e:
             print(f"⚠ 檢查股票 {code} ({name}) 時發生錯誤: {e}")
-
 
 # ==========================================
 # 盤後資料獲取核心
@@ -949,7 +967,7 @@ def main():
         if rename_dict: res = res.rename(columns=rename_dict)
         return res
 
-    # 統一重新命名字典 (避免產生欄位重複)
+    # 統一重新命名字典，確保送交即時引擎的欄位格式一致
     std_rename = {"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"}
     inst_rename = {**std_rename, "外資_0": "外資(T)", "外資_1": "外資(T-1)", "外資_2": "外資(T-2)", "投信_0": "投信(T)", "投信_1": "投信(T-1)", "投信_2": "投信(T-2)"}
 
@@ -1383,7 +1401,7 @@ def main():
     # 執行盤中即時檢查 (收集所有策略中的股票去重)
     # ==========================================
     target_dfs = []
-    strat_names = [ 'res17', 'res35', 'res22', 'res25']
+    strat_names = ['res1', 'res2', 'res3', 'res4', 'res6', 'res7', 'res11', 'res13', 'res15', 'res16', 'res17', 'res20', 'res22', 'res23', 'res25', 'initial_res32', 'res33', 'res34', 'res35']
     for df_name in strat_names:
         if df_name in locals() and isinstance(locals()[df_name], pd.DataFrame) and not locals()[df_name].empty:
             target_dfs.append(locals()[df_name])
@@ -1392,7 +1410,9 @@ def main():
         combined_df = pd.concat(target_dfs, ignore_index=True)
         unique_target_df = combined_df.drop_duplicates(subset=['股票代號']).reset_index(drop=True)
         print(f"\n🎯 總計擷取 {len(unique_target_df)} 檔不重複的強勢標的，送入即時引擎監控...")
-        intraday_check_strategy(unique_target_df)
+        
+        # 傳入 d1_s 以精確抓取真正的昨收欄位，解決 yfinance 當日判斷失準的問題
+        intraday_check_strategy(unique_target_df, d1_s)
     else:
         print("\nℹ 目前無任何策略資料可供盤中監控。")
 

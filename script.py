@@ -1383,7 +1383,7 @@ def main():
     # 執行盤中即時檢查 (收集所有策略中的股票去重)
     # ==========================================
     target_dfs = []
-    strat_names = [ 'res34', 'res35']
+    strat_names = [ 'res17', 'res35', 'res22', 'res25']
     for df_name in strat_names:
         if df_name in locals() and isinstance(locals()[df_name], pd.DataFrame) and not locals()[df_name].empty:
             target_dfs.append(locals()[df_name])

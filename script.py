@@ -954,8 +954,8 @@ def main():
 
     res1 = build_res(cond1_fn, ["跳空天數", "量增天數", "增量倍數"], [False, False, False], std_rename)
     res2 = build_res(cond2_fn, ["墊高天數", "外資連買天數", "增量倍數"], [False, False, False], std_rename)
-    res3 = build_res(cond3_fn, ["外資連買天數", "增量倍數"], [False, False], {**std_rename, "外資_0": "最新日外資(張)"})
-    res4 = build_res(cond4_fn, ["投信近七日(張)", "增量倍數"], [False, False], {**std_rename, "外資_0": "最新日外資(張)"})
+    res3 = build_res(cond3_fn, ["外資連買天數", "增量倍數"], [False, False], std_rename)
+    res4 = build_res(cond4_fn, ["投信近七日(張)", "增量倍數"], [False, False], std_rename)
     res6 = build_res(cond6_fn, ["投信近三日(張)", "增量倍數"], [False, False], std_rename)
     res7 = build_res(cond7_fn, ["投信近七日(張)", "增量倍數"], [False, False], std_rename)
     res11 = build_res(cond11_fn, ["實體K漲幅(%)"], [False], {"開盤價_0": f"{d0_s} 開盤", "收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"})
@@ -964,7 +964,7 @@ def main():
     res15 = res15[(res15['創60日最大量']) & (res15['60日震幅(%)'] <= 10.0)]
     res16 = build_res(cond16_fn, ["最新漲幅(%)", "增量倍數"], [False, False], std_rename)
     res17 = build_res(cond17_fn, ["最新漲幅(%)", "增量倍數"], [False, False], std_rename)
-    res20 = build_res(cond20_fn, ["外資_0", "最新漲幅(%)"], [False, False], {**std_rename, "外資_0": "最新日外資(張)", "外資_1": "前1日外資(張)", "外資_2": "前2日外資(張)"})
+    res20 = build_res(cond20_fn, ["外資_0", "最新漲幅(%)"], [False, False], std_rename)
     res22 = build_res(cond22_fn, ["最新漲幅(%)", "增量倍數"], [False, False], std_rename)
     res23 = build_res(cond23_fn, ["最新漲幅(%)", "增量倍數"], [False, False], std_rename)
     res25 = build_res(cond25_fn, ["千張大戶比例(%)", "最新漲幅(%)"], [False, False], std_rename)

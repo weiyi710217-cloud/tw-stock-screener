@@ -52,7 +52,7 @@ def send_telegram_message(message: str):
         "chat_id": TELEGRAM_CHAT_ID,
         "text": message,
         "parse_mode": "Markdown",
-        "disable_web_page_preview": True # 避免連結展開佔用大版面
+        "disable_web_page_preview": True
     }
     try:
         resp = requests.post(url, json=payload, timeout=10)
@@ -64,9 +64,6 @@ def send_telegram_message(message: str):
         print(f"⚠ Telegram 連線錯誤: {e}")
 
 def check_all_intraday_signals(df_5m, df_15m, prev_close, is_volume_safe, is_above_10d_high):
-    """
-    【盤中訊號核心引擎】一次性計算共通變數，並判斷是否觸發五大策略
-    """
     if df_5m is None or len(df_5m) < 3 or not is_volume_safe or not is_above_10d_high:
         return [], {}
 
@@ -86,7 +83,6 @@ def check_all_intraday_signals(df_5m, df_15m, prev_close, is_volume_safe, is_abo
     triggered_signals = []
     signal_data = {"c0": c0_5m, "pct_change": pct_change}
 
-    # 策略一：雙時框連續收盤向上墊高 (需 >= 3根)
     cond_5m_up = (c0_5m > c1_5m) and (c1_5m > c2_5m)
     cond_15m_up = False
     if df_15m is not None and len(df_15m) >= 3:
@@ -98,14 +94,12 @@ def check_all_intraday_signals(df_5m, df_15m, prev_close, is_volume_safe, is_abo
     if cond_5m_up and cond_15m_up:
         triggered_signals.append(1)
         
-    # 策略五：5分K連續跳空兩次 (需 >= 3根)
     gap1 = (o1_5m > c2_5m)
     gap2 = (o0_5m > c1_5m)
-    strong_k = (c1_5m >= o1_5m) and (c0_5m >= o0_5m) # 確保跳空後維持紅K不軟弱
+    strong_k = (c1_5m >= o1_5m) and (c0_5m >= o0_5m)
     if gap1 and gap2 and strong_k:
         triggered_signals.append(5)
 
-    # 策略三：主力階梯推升型態 (需 >= 5根)
     if len(df_5m) >= 5:
         c3_5m = float(df_5m['Close'].iloc[-4])
         is_step_up = cond_5m_up and (c2_5m > c3_5m)
@@ -113,7 +107,6 @@ def check_all_intraday_signals(df_5m, df_15m, prev_close, is_volume_safe, is_abo
         if is_step_up and is_price_stable:
             triggered_signals.append(3)
 
-    # 策略二：20分鐘高點突破 (需 >= 6根)
     if len(df_5m) >= 6:
         recent_4_closes = df_5m['Close'].iloc[-5:-1]
         recent_4_highs = df_5m['High'].iloc[-5:-1]
@@ -127,7 +120,6 @@ def check_all_intraday_signals(df_5m, df_15m, prev_close, is_volume_safe, is_abo
             triggered_signals.append(2)
             signal_data["max_h20"] = max_high_20m
 
-    # 策略四：高檔鎖碼橫盤突破 (需 >= 8根)
     if len(df_5m) >= 8:
         recent_highs = df_5m['High'].iloc[:-1]
         day_max_high = float(recent_highs.max())
@@ -143,7 +135,6 @@ def check_all_intraday_signals(df_5m, df_15m, prev_close, is_volume_safe, is_abo
 
     return triggered_signals, signal_data
 
-
 def intraday_check_strategy(res_df, d1_s):
     if res_df is None or res_df.empty:
         print("ℹ 目前無符合的監控標的。")
@@ -157,7 +148,6 @@ def intraday_check_strategy(res_df, d1_s):
         market = str(row['市場']).strip() if '市場' in row else "上市"
         
         try:
-            # 兼容讀取：優先找策略表的日期命名，若無則找總表的 '收盤價_1'
             val = row.get(f"{d1_s} 收盤")
             if pd.isna(val) or val is None:
                 val = row.get("收盤價_1", 0)
@@ -191,11 +181,9 @@ def intraday_check_strategy(res_df, d1_s):
                 
             df_15m = stock.history(period="1d", interval="15m")
             
-            # 抓取目前最新 K 棒數值
             current_price = float(df_5m['Close'].iloc[-1])
             is_above_10d_high = current_price > max_10d_close
 
-            # 成交量與出貨型態判定
             v0_5m = float(df_5m['Volume'].iloc[-1]) / 100.0
             v1_5m = float(df_5m['Volume'].iloc[-2]) / 100.0
             
@@ -206,12 +194,8 @@ def intraday_check_strategy(res_df, d1_s):
             upper_shadow = h0_5m - max(c0_5m, o0_5m)
             body = abs(c0_5m - o0_5m)
             
-            # 【排除爆量出貨】：避免單根無腦爆出 3 倍巨量，或出量 (>1.5倍) 且帶長上影線 (上影線>實體1.5倍)
             is_blowoff = (v0_5m > v1_5m * 3.0) or ((v0_5m > v1_5m * 1.5) and (upper_shadow > body * 1.5))
-            
-            # 【排除量太少】：5分K單根量小於 50 張不通知，避免滑價與無流動性
             is_liquid = v0_5m >= 50
-            
             is_volume_safe = is_liquid and (v1_5m > 0) and not is_blowoff
 
             triggered_list, sig_data = check_all_intraday_signals(df_5m, df_15m, prev_close, is_volume_safe, is_above_10d_high)
@@ -625,11 +609,14 @@ def main():
     close_cols_40 = [col for col in df_merge.columns if col.startswith('收盤價_') and 1 <= int(col.split('_')[1]) <= 40]
     close_cols_60 = [col for col in df_merge.columns if col.startswith('收盤價_') and 1 <= int(col.split('_')[1]) <= 60]
     close_cols_120 = [col for col in df_merge.columns if col.startswith('收盤價_') and 1 <= int(col.split('_')[1]) <= 120]
+    
+    high_cols_120 = [col for col in df_merge.columns if col.startswith('最高價_') and 1 <= int(col.split('_')[1]) <= 120]
 
     df_merge['5日最高收盤'] = df_merge[close_cols_5].max(axis=1)
     df_merge['20日最高收盤'] = df_merge[close_cols_20].max(axis=1)
     df_merge['60日最高收盤'] = df_merge[close_cols_60].max(axis=1)
     df_merge['120日最高收盤'] = df_merge[close_cols_120].max(axis=1)
+    df_merge['120日最高價'] = df_merge[high_cols_120].max(axis=1)
     
     df_merge['20日最低收盤'] = df_merge[close_cols_20].min(axis=1)
     df_merge['40日最低收盤'] = df_merge[close_cols_40].min(axis=1)
@@ -999,7 +986,6 @@ def main():
         if rename_dict: res = res.rename(columns=rename_dict)
         return res
 
-    # 統一重新命名字典，確保送交即時引擎的欄位格式一致
     std_rename = {"收盤價_1": f"{d1_s} 收盤", "收盤價_0": f"{d0_s} 收盤", "成交量_0": f"{d0_s} 量(張)"}
     inst_rename = {**std_rename, "外資_0": "外資(T)", "外資_1": "外資(T-1)", "外資_2": "外資(T-2)", "投信_0": "投信(T)", "投信_1": "投信(T-1)", "投信_2": "投信(T-2)"}
 
@@ -1014,7 +1000,20 @@ def main():
     res15 = build_res(cond15_fn, ["60日震幅(%)", "增量倍數"], [True, False], std_rename)
     res15 = res15[(res15['創60日最大量']) & (res15['60日震幅(%)'] <= 10.0)]
     res16 = build_res(cond16_fn, ["最新漲幅(%)", "增量倍數"], [False, False], std_rename)
+    
+    # === 策略17：加上 120日最高價突破標記 ===
     res17 = build_res(cond17_fn, ["最新漲幅(%)", "增量倍數"], [False, False], std_rename)
+    if not res17.empty:
+        def mark_120_high(row):
+            try:
+                c0 = float(row.get(f'{d0_s} 收盤', 0))
+                h120 = float(row.get('120日最高價', 0))
+                if c0 > h120 and h120 > 0:
+                    return "<br><span style='color:#dc2626;font-size:11px;font-weight:bold;'>🎯 收盤突破120日最高點</span>"
+            except Exception: pass
+            return ""
+        res17['標的'] = res17['標的'] + res17.apply(mark_120_high, axis=1)
+        
     res20 = build_res(cond20_fn, ["外資_0", "最新漲幅(%)"], [False, False], std_rename)
     res22 = build_res(cond22_fn, ["最新漲幅(%)", "增量倍數"], [False, False], std_rename)
     res23 = build_res(cond23_fn, ["最新漲幅(%)", "增量倍數"], [False, False], std_rename)
@@ -1151,9 +1150,20 @@ def main():
     if hit_counts:
         df_hits = pd.DataFrame([{"股票代號": k, "入選次數": v, "符合策略": ", ".join(hit_names[k])} for k, v in hit_counts.items()])
         res12 = pd.merge(df_hits, df_merge, on="股票代號", how="inner")
+        
+        # === 策略12 (綜合排行) 強制過濾 ===
+        # 1. 排除千張大戶小於 30%
+        res12 = res12[res12['千張大戶比例(%)'] >= 30.0]
+        # 2. 條件：命中超過5個 (>5) 或是 近10日漲幅 > 10%
+        res12 = res12[(res12['入選次數'] > 5) | (res12['近10日漲幅(%)'] > 10.0)]
+        
         res12['近7日符合次數'] = res12['入選次數'].apply(lambda x: f"命中 {x} 個策略")
         res12 = res12.sort_values(by=["入選次數", "最新漲幅(%)"], ascending=[False, False]).rename(columns=std_rename)
-        html_tb12 = apply_color_formatting(res12[base_cols + ["入選次數", "符合策略"] + chip_cols]).to_html(index=False, classes="styled-table sortable-table", escape=False)
+        
+        if res12.empty:
+            html_tb12 = "<p style='text-align:center;'>目前無符合高標條件之強勢股</p>"
+        else:
+            html_tb12 = apply_color_formatting(res12[base_cols + ["入選次數", "符合策略"] + chip_cols]).to_html(index=False, classes="styled-table sortable-table", escape=False)
     else:
         res12, html_tb12 = pd.DataFrame(), "<p style='text-align:center;'>目前無任何股票入選</p>"
 
@@ -1431,16 +1441,15 @@ def main():
     # 執行盤中即時檢查 (收集所有策略中的股票 + 自定義強制監控股)
     # ==========================================
     
-    # 📝 【手動自定義盤中監控清單】在此輸入您想強制監控的股票代號
-    custom_watch_list = ["4912", "5508", "5483", "5465", "1563", "3631", "6277", "8171", "5291", "5426", "4961", "2464", "6271", "5426", "5426", "5426", "5426"] 
+    # 📝 【手動自定義盤中監控清單】包含您指定的 4912, 5508, 5483
+    custom_watch_list = ["4912", "5508", "5483"] 
 
     target_dfs = []
-    strat_names = ['res17', 'res22',  'res25', 'res35']
+    strat_names = ['res1', 'res2', 'res3', 'res4', 'res6', 'res7', 'res11', 'res13', 'res15', 'res16', 'res17', 'res20', 'res22', 'res23', 'res25', 'initial_res32', 'res33', 'res34', 'res35']
     for df_name in strat_names:
         if df_name in locals() and isinstance(locals()[df_name], pd.DataFrame) and not locals()[df_name].empty:
             target_dfs.append(locals()[df_name])
             
-    # 將自選股直接從 df_merge 總表中提列出來，強制加入監控列隊
     if custom_watch_list and 'df_merge' in locals() and not df_merge.empty:
         custom_df = df_merge[df_merge['股票代號'].isin(custom_watch_list)].copy()
         if not custom_df.empty:

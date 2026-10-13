@@ -62,22 +62,103 @@ def send_telegram_message(message: str):
         print(f"⚠ Telegram 連線錯誤: {e}")
 
 
+def check_strategy_1_dual_timeframe(df_5m, df_15m, prev_close, is_volume_safe):
+    """
+    【策略一】5分K & 15分K 雙時框連續收盤向上墊高
+    """
+    if df_5m is None or len(df_5m) < 3 or not is_volume_safe:
+        return False, 0.0, 0.0, 0.0, 0.0
+        
+    c0_5m = float(df_5m['Close'].iloc[-1])
+    c1_5m = float(df_5m['Close'].iloc[-2])
+    c2_5m = float(df_5m['Close'].iloc[-3])
+    
+    pct_change = ((c0_5m - prev_close) / prev_close) * 100 if prev_close > 0 else 0.0
+    
+    if pct_change >= 9.5 or (c0_5m - c1_5m) / c1_5m * 100 >= 9.5:
+        return False, 0.0, 0.0, 0.0, 0.0
+    
+    cond_5m_up = (c0_5m > c1_5m) and (c1_5m > c2_5m)
+    
+    cond_15m_up = False
+    if df_15m is not None and len(df_15m) >= 3:
+        c0_15m = float(df_15m['Close'].iloc[-1])
+        c1_15m = float(df_15m['Close'].iloc[-2])
+        c2_15m = float(df_15m['Close'].iloc[-3])
+        cond_15m_up = (c0_15m > c1_15m) and (c1_15m > c2_15m)
 
-def check_strategy_4_high_plateau(df_5m, is_volume_safe):
+    triggered = cond_5m_up and cond_15m_up
+    return triggered, c0_5m, c1_5m, c2_5m, pct_change
+
+
+def check_strategy_2_20m_breakout(df_5m, prev_close, is_volume_safe):
     """
-    【策略四】高檔鎖碼與均價線防守突破（全日高姿態整理，若已漲停則不通知）
+    【策略二】20分鐘高點不破（回檔 1% 內）＋ 最新 5分K 突破高點
     """
-    if df_5m is None or len(df_5m) < 8 or not is_volume_safe:
-        return False, 0.0, 0.0
+    if df_5m is None or len(df_5m) < 6 or not is_volume_safe:
+        return False, 0.0, 0.0, 0.0
         
     c0_5m = float(df_5m['Close'].iloc[-1])
     c1_5m = float(df_5m['Close'].iloc[-2])
     
-    # 檢查是否已經漲停（相較於前一根 5分K 漲幅達到 9.5% 以上，或可依您的定義調整）
-    # 如果當根已經直接鎖漲停，就不重複通知
-    price_change_pct = (c0_5m - c1_5m) / c1_5m * 100
-    if price_change_pct >= 9.5:
+    pct_change = ((c0_5m - prev_close) / prev_close) * 100 if prev_close > 0 else 0.0
+    
+    if pct_change >= 9.5 or (c0_5m - c1_5m) / c1_5m * 100 >= 9.5:
+        return False, 0.0, 0.0, 0.0
+
+    recent_4_closes = df_5m['Close'].iloc[-5:-1]
+    recent_4_highs = df_5m['High'].iloc[-5:-1]
+    
+    max_high_20m = float(recent_4_highs.max())
+    min_close_20m = float(recent_4_closes.min())
+    
+    is_holding_high = min_close_20m >= (max_high_20m * 0.99)
+    is_breaking_out = c0_5m > max_high_20m
+    
+    triggered = is_holding_high and is_breaking_out
+    return triggered, c0_5m, max_high_20m, pct_change
+
+
+def check_strategy_3_mainforce_climb(df_5m, prev_close, is_volume_safe):
+    """
+    【策略三】主力階梯推升型態（5分K呈現穩健階梯式連續墊高）
+    """
+    if df_5m is None or len(df_5m) < 5 or not is_volume_safe:
         return False, 0.0, 0.0
+        
+    c0_5m = float(df_5m['Close'].iloc[-1])
+    c1_5m = float(df_5m['Close'].iloc[-2])
+    c2_5m = float(df_5m['Close'].iloc[-3])
+    c3_5m = float(df_5m['Close'].iloc[-4])
+    
+    pct_change = ((c0_5m - prev_close) / prev_close) * 100 if prev_close > 0 else 0.0
+    
+    if pct_change >= 9.5 or (c0_5m - c1_5m) / c1_5m * 100 >= 9.5:
+        return False, 0.0, 0.0, 0.0
+    
+    # 價格呈現連續階梯式墊高
+    is_step_up = (c0_5m > c1_5m) and (c1_5m > c2_5m) and (c2_5m > c3_5m)
+    # 漲幅合理穩定，無瞬間過度異常跳空
+    is_price_stable = (c0_5m / c1_5m) <= 1.035
+    
+    triggered = is_step_up and is_price_stable
+    return triggered, c0_5m, pct_change
+
+
+def check_strategy_4_high_plateau(df_5m, prev_close, is_volume_safe):
+    """
+    【策略四】高檔鎖碼與均價線防守突破（全日高姿態整理）
+    """
+    if df_5m is None or len(df_5m) < 8 or not is_volume_safe:
+        return False, 0.0, 0.0, 0.0
+        
+    c0_5m = float(df_5m['Close'].iloc[-1])
+    c1_5m = float(df_5m['Close'].iloc[-2])
+    
+    pct_change = ((c0_5m - prev_close) / prev_close) * 100 if prev_close > 0 else 0.0
+    
+    if pct_change >= 9.5 or (c0_5m - c1_5m) / c1_5m * 100 >= 9.5:
+        return False, 0.0, 0.0, 0.0
 
     recent_highs = df_5m['High'].iloc[:-1]
     day_max_high = float(recent_highs.max())
@@ -89,48 +170,23 @@ def check_strategy_4_high_plateau(df_5m, is_volume_safe):
     is_challenging_high = c0_5m >= (day_max_high * 0.99)
     
     triggered = is_high_plateau and is_challenging_high
-    return triggered, c0_5m, day_max_high
+    return triggered, c0_5m, day_max_high, pct_change
 
-
-def intraday_strategy_mainforce_climb(df_5m):
-    """
-    策略：主力點火階梯走高（對應圖中大戶買超、價格一路穩健墊高之型態）
-    """
-    if df_5m is None or len(df_5m) < 6:
-        return False
-        
-    # 取得最近幾根 5 分K 的收盤價與成交量
-    c0 = float(df_5m['Close'].iloc[-1]) # 最新
-    c1 = float(df_5m['Close'].iloc[-2])
-    c2 = float(df_5m['Close'].iloc[-3])
-    c3 = float(df_5m['Close'].iloc[-4])
-    
-    v0 = float(df_5m['Volume'].iloc[-1]) / 100.0
-    v1 = float(df_5m['Volume'].iloc[-2]) / 100.0
-    
-    # 1. 價格呈現階梯式連續墊高（例如最近 3 根 5分K 收盤價持續向上）
-    is_step_up = (c0 > c1) and (c1 > c2) and (c2 > c3)
-    
-    # 2. 帶量但不至於瞬間爆量失控（成交量大於 0 且小於前一根的 2 倍，確保是穩健推升）
-    is_volume_healthy = (v1 <= 0) or (v0 <= v1 * 2.0)
-    
-    # 3. 漲幅限制：確保當盤中急拉時，最新價相對前一根沒有過度誇張的異常跳空
-    is_price_stable = (c0 / c1) <= 1.035 # 5分鐘內漲幅小於 3.5%
-    
-    return is_step_up and is_volume_healthy and is_price_stable
 
 
 def intraday_check_strategy(res_df):
     if res_df is None or res_df.empty:
-        print("ℹ 目前無符合「創120日新高」的監控標的。")
+        print("ℹ 目前無符合的監控標的。")
         return
 
-    print(f"🚀 啟動盤中即時雙策略獨立監控（含 2倍成交量上限過濾），準備檢查 {len(res_df)} 檔創高股...")
+    print(f"🚀 啟動盤中即時四大策略獨立偵測（含漲停過濾與漲跌幅計算），準備檢查 {len(res_df)} 檔強勢股...")
     
     for _, row in res_df.iterrows():
         code = str(row['股票代號']).strip()
         name = str(row['股票名稱']).strip() if '股票名稱' in row else ""
         market = str(row['市場']).strip() if '市場' in row else "上市"
+        
+        prev_close = float(row.get('收盤價_1', 0))
         
         suffix = ".TWO" if "上櫃" in market else ".TW"
         ticker_symbol = f"{code}{suffix}"
@@ -138,7 +194,11 @@ def intraday_check_strategy(res_df):
         try:
             stock = yf.Ticker(ticker_symbol)
             
-            # 抓取 5 分K 與 15 分K
+            if prev_close <= 0:
+                df_daily = stock.history(period="5d")
+                if df_daily is not None and len(df_daily) >= 2:
+                    prev_close = float(df_daily['Close'].iloc[-2])
+
             df_5m = stock.history(period="1d", interval="5m")
             if (df_5m is None or len(df_5m) < 6) and suffix == ".TWO":
                 stock = yf.Ticker(f"{code}.TW")
@@ -149,97 +209,73 @@ def intraday_check_strategy(res_df):
                 
             df_15m = stock.history(period="1d", interval="15m")
             
-            # 取得 5 分K 的成交量與收盤價數據
-            v0_5m = float(df_5m['Volume'].iloc[-1]) / 100.0  # 最新一根 5分K 成交量
-            v1_5m = float(df_5m['Volume'].iloc[-2]) / 100.0  # 前一根 5分K 成交量
-            
-            c0_5m = float(df_5m['Close'].iloc[-1])
-            c1_5m = float(df_5m['Close'].iloc[-2])
-            c2_5m = float(df_5m['Close'].iloc[-3])
-
-            # 共通防呆條件：最新一根 5分K 成交量不可超過前一根的 2 倍（避免爆量異常）
+            # 成交量防呆（/100 換算張數，不超過前一根 2 倍）
+            v0_5m = float(df_5m['Volume'].iloc[-1]) / 100.0
+            v1_5m = float(df_5m['Volume'].iloc[-2]) / 100.0
             is_volume_safe = (v1_5m <= 0) or (v0_5m <= v1_5m * 2.0)
 
-            # ==========================================
-            # 策略 1：5分K & 15分K 雙時框連續收盤向上墊高
-            # ==========================================
-            cond_5m_up = (c0_5m > c1_5m) and (c1_5m > c2_5m)
-            
-            cond_15m_up = False
-            if df_15m is not None and len(df_15m) >= 3:
-                c0_15m = float(df_15m['Close'].iloc[-1])
-                c1_15m = float(df_15m['Close'].iloc[-2])
-                c2_15m = float(df_15m['Close'].iloc[-3])
-                cond_15m_up = (c0_15m > c1_15m) and (c1_15m >= c2_15m)
-
-            triggered_strategy_1 = cond_5m_up and cond_15m_up and is_volume_safe
-
-            # ==========================================
-            # 策略 2：20分鐘高點不破 ＋ 最新 5分K 突破高點
-            # ==========================================
-            recent_4_closes = df_5m['Close'].iloc[-5:-1] # 前 20 分鐘收盤
-            recent_4_highs = df_5m['High'].iloc[-5:-1]   # 前 20 分鐘高點
-            
-            max_high_20m = float(recent_4_highs.max())
-            min_close_20m = float(recent_4_closes.min())
-            
-            # 過去 20 分鐘收盤沒有低於最高點的 0.5%（維持高檔抗跌）
-            is_holding_high = min_close_20m >= (max_high_20m * 0.995)
-            # 最新 5 分K收盤突破近 20 分鐘高點
-            is_breaking_out = c0_5m > max_high_20m
-            
-            triggered_strategy_2 = is_holding_high and is_breaking_out and is_volume_safe
-
-            # ==========================================
-            # 策略 3：主力階梯推升型態（對應大戶買超穩步走高）
-            # ==========================================
-            triggered_strategy_3 = intraday_strategy_mainforce_climb(df_5m) and is_volume_safe
-
-            
-
-            # ==========================================
-            # 獨立發送通知判斷
-            # ==========================================
-            if triggered_strategy_1:
+            # ------------------------------------------
+            # 策略一檢查
+            # ------------------------------------------
+            t1, c0_s1, c1_s1, c2_s1, pct1 = check_strategy_1_dual_timeframe(df_5m, df_15m, prev_close, is_volume_safe)
+            if t1:
+                sign = "+" if pct1 >= 0 else ""
                 msg1 = f"🚨 *【策略一：雙時框連拉通知】*\n" \
                        f"• 股票: `{name} ({code})`\n" \
+                       f"• 目前漲跌幅: `{sign}{pct1:.2f}%` (現價: `{c0_s1:.2f}`)\n" \
                        f"• 5分K & 15分K 同步連續收盤向上墊高！\n" \
-                       f"• 最新 5分K收盤: `{c0_5m:.2f}` (成交量: `{v0_5m:.0f}` / 前量: `{v1_5m:.0f}`)"
+                       f"• 成交量: `{v0_5m:.1f}張` (前量: `{v1_5m:.1f}張`)"
                 print(msg1)
                 send_telegram_message(msg1)
 
-            if triggered_strategy_2:
+            # ------------------------------------------
+            # 策略二檢查
+            # ------------------------------------------
+            t2, c0_s2, max_h20, pct2 = check_strategy_2_20m_breakout(df_5m, prev_close, is_volume_safe)
+            if t2:
+                sign = "+" if pct2 >= 0 else ""
                 msg2 = f"🚨 *【策略二：20分鐘高點突破通知】*\n" \
                        f"• 股票: `{name} ({code})`\n" \
+                       f"• 目前漲跌幅: `{sign}{pct2:.2f}%` (現價: `{c0_s2:.2f}`)\n" \
                        f"• 狀態: 20分鐘高檔抗跌後帶量突破（未爆量）！\n" \
-                       f"• 最新 5分K收盤: `{c0_5m:.2f}` (20分高點: `{max_high_20m:.2f}`)"
+                       f"• 20分高點: `{max_h20:.2f}`"
                 print(msg2)
                 send_telegram_message(msg2)
-                
-            if triggered_strategy_3:
+
+            # ------------------------------------------
+            # 策略三檢查
+            # ------------------------------------------
+            t3, c0_s3, pct3 = check_strategy_3_mainforce_climb(df_5m, prev_close, is_volume_safe)
+            if t3:
+                sign = "+" if pct3 >= 0 else ""
                 msg3 = f"🚨 *【策略三：主力階梯推升通知】*\n" \
                        f"• 股票: `{name} ({code})`\n" \
-                       f"• 狀態: 5分K呈現穩健階梯式墊高，主力買盤點火！\n" \
-                       f"• 最新 5分K收盤: `{c0_5m:.2f}` (成交量: `{v0_5m:.1f}張`)"
+                       f"• 目前漲跌幅: `{sign}{pct3:.2f}%` (現價: `{c0_s3:.2f}`)\n" \
+                       f"• 狀態: 5分K呈現穩健階梯式連續墊高，主力買盤點火！\n" \
+                       f"• 成交量: `{v0_5m:.1f}張`"
                 print(msg3)
                 send_telegram_message(msg3)
-            
-            
-            # ==========================================
-            # 呼叫獨立策略四：高檔鎖碼橫盤突破
-            # ==========================================
-            t4, c0_s4, day_max = check_strategy_4_high_plateau(df_5m, is_volume_safe)
+
+            # ------------------------------------------
+            # 策略四檢查
+            # ------------------------------------------
+            t4, c0_s4, day_max, pct4 = check_strategy_4_high_plateau(df_5m, prev_close, is_volume_safe)
             if t4:
+                sign = "+" if pct4 >= 0 else ""
                 msg4 = f"🚨 *【策略四：高檔鎖碼橫盤突破通知】*\n" \
                        f"• 股票: `{name} ({code})`\n" \
+                       f"• 目前漲跌幅: `{sign}{pct4:.2f}%` (現價: `{c0_s4:.2f}`)\n" \
                        f"• 狀態: 全日高姿態整理、緊貼高點不墜，準備再攻！\n" \
-                       f"• 最新 5分K收盤: `{c0_s4:.2f}` (當日高點區: `{day_max:.2f}`)"
+                       f"• 當日高點區: `{day_max:.2f}`"
                 print(msg4)
                 send_telegram_message(msg4)
-            
+                
             time.sleep(0.5)
         except Exception as e:
             print(f"⚠ 檢查股票 {code} ({name}) 時發生錯誤: {e}")
+
+
+
 
 def is_valid_cache(filepath: str, min_size: int = 50) -> bool:
     return os.path.exists(filepath) and os.path.getsize(filepath) >= min_size

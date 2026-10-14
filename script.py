@@ -2031,7 +2031,7 @@ def main():
         if isinstance(s_df, pd.DataFrame) and not s_df.empty and '股票代號' in s_df.columns:
             watch_codes.update(s_df['股票代號'].astype(str).str.strip().tolist())
 
-    # 2. 從未改名的 df_merge 提取盤中所需的關鍵欄位，存成輕量 JSON
+   # 2. 從未改名的 df_merge 提取盤中所需的關鍵欄位，存成輕量 JSON
     if watch_codes and not df_merge.empty:
         cols_Needed = ['股票代號', '股票名稱', '市場', '收盤價_0', '收盤價_1', '5日最高收盤']
         unique_target_df = (
@@ -2046,9 +2046,14 @@ def main():
             "stocks": unique_target_df.to_dict("records")
         }
         watchlist_path = os.path.join(CACHE_DIR, "intraday_watchlist.json")
-        with open(watchlist_path, "w", encoding="utf-8") as f:
-            json.dump(watchlist_payload, f, ensure_ascii=False, indent=2)
-        print(f"\n📌 已匯出 {len(unique_target_df)} 檔監控清單至: {watchlist_path}")
+        
+        # 安全寫入：確保資料不為空才覆蓋
+        if not unique_target_df.empty:
+            with open(watchlist_path, "w", encoding="utf-8") as f:
+                json.dump(watchlist_payload, f, ensure_ascii=False, indent=2)
+            print(f"\n📌 已安全匯出 {len(unique_target_df)} 檔監控清單至: {watchlist_path}")
+        else:
+            print("\n⚠ 警告：欲匯出的監控清單為空，略過寫入以保護舊快取。")
     else:
         print("\nℹ 目前無任何策略資料或自選股可供匯出。")
 

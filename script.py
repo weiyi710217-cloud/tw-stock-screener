@@ -84,8 +84,8 @@ def save_sent_alerts(date_str: str, alerts_set: set):
 
 def check_all_intraday_signals(df_5m, df_15m, prev_close, is_volume_safe, is_above_5d_high):
     """
-    【盤中訊號核心引擎 2.0】
-    加入當日 VWAP (成交量加權平均價) 與日內高姿態濾網，排除開高走低跌破均價線的假突破
+    【盤中訊號核心引擎 2.1】
+    保留當日 VWAP 均價線支撐濾網，放寬高檔震盪容許度，避免漏接強勢股
     """
     if df_5m is None or len(df_5m) < 3 or not is_volume_safe or not is_above_5d_high:
         return [], {}
@@ -99,30 +99,29 @@ def check_all_intraday_signals(df_5m, df_15m, prev_close, is_volume_safe, is_abo
 
     pct_change = ((c0_5m - prev_close) / prev_close) * 100 if prev_close > 0 else 0.0
 
-    # 共通漲停過濾（已漲停或當根暴漲鎖死，全數不通知）以及跌破平盤不通知
-    if pct_change >= 9.3 or pct_change <= 1.0 or (c0_5m - c1_5m) / c1_5m * 100 >= 9.0:
+    # 共通漲停過濾（已漲停 >=9.4% 或當根暴漲鎖死，全數不通知）以及平盤下不通知
+    if pct_change >= 9.4 or pct_change <= 0.0 or (c0_5m - c1_5m) / c1_5m * 100 >= 9.2:
         return [], {}
 
-    # 【關鍵升級】計算盤中 VWAP (當日均價線) 與日內最高價位置
+    # 計算盤中 VWAP (當日成交量加權均價線)
     typical_price = (df_5m['High'] + df_5m['Low'] + df_5m['Close']) / 3.0
     total_vol = float(df_5m['Volume'].sum())
     vwap = float((typical_price * df_5m['Volume']).sum() / total_vol) if total_vol > 0 else c0_5m
-    day_high_so_far = float(df_5m['High'].max())
 
-    # 股價必須站穩當日均價線 (VWAP) 之上，且距離當日最高點回落不超過 2%（排除開高走低反彈）
-    if c0_5m < vwap or c0_5m < (day_high_so_far * 0.98):
+    # 現價必須守在當日均價線附近之上 (容許 0.5% 微幅誤差)，排除開高走低弱勢股
+    if c0_5m < (vwap * 0.995):
         return [], {}
 
     triggered_signals = []
     signal_data = {"c0": c0_5m, "pct_change": pct_change, "vwap": vwap}
 
     # 策略一：雙時框連續收盤向上墊高 (5分K >= 3根 且 15分K >= 3根)
-    cond_5m_up = (c0_5m > c1_5m) and (c1_5m > c2_5m) and (c0_5m >= o0_5m)
+    cond_5m_up = (c0_5m > c1_5m) and (c1_5m > c2_5m)
     cond_15m_up = False
     if df_15m is not None and len(df_15m) >= 3:
-        c0_15m = float(df_15m['Close'].iloc[-1])
-        c1_15m = float(df_15m['Close'].iloc[-2])
-        c2_15m = float(df_15m['Close'].iloc[-3])
+        c0_15m = float(df_15m.iloc[-1])
+        c1_15m = float(df_15m.iloc[-2])
+        c2_15m = float(df_15m.iloc[-3])
         cond_15m_up = (c0_15m > c1_15m) and (c1_15m > c2_15m)
 
     if cond_5m_up and cond_15m_up:
@@ -151,7 +150,7 @@ def check_all_intraday_signals(df_5m, df_15m, prev_close, is_volume_safe, is_abo
         max_high_20m = float(recent_4_highs.max())
         min_close_20m = float(recent_4_closes.min())
 
-        is_holding_high = min_close_20m >= (max_high_20m * 0.99)
+        is_holding_high = min_close_20m >= (max_high_20m * 0.988)
         is_breaking_out = c0_5m > max_high_20m
         if is_holding_high and is_breaking_out:
             triggered_signals.append(2)
@@ -166,134 +165,174 @@ def check_all_intraday_signals(df_5m, df_15m, prev_close, is_volume_safe, is_abo
         min_recent_close_4 = float(recent_closes_4.min())
 
         is_high_plateau = min_recent_close_4 >= (day_max_high * 0.985)
-        is_challenging_high = c0_5m >= (day_max_high * 0.995)
+        is_challenging_high = c0_5m >= (day_max_high * 0.99)
         if is_high_plateau and is_challenging_high:
             triggered_signals.append(4)
             signal_data["day_max"] = day_max_high
 
     return triggered_signals, signal_data
 
-def intraday_check_strategy(res_df, d1_s):
+def intraday_check_strategy(res_df, date_0):
     if res_df is None or res_df.empty:
-        print("ℹ 目前無符合的監控標的。")
+        print("ℹ 目前無符合的監控標的。", flush=True)
         return
 
     today_str = datetime.date.today().strftime("%Y%m%d")
     sent_alerts = load_sent_alerts(today_str)
 
-    print(f"🚀 啟動盤中即時五大策略整合引擎 2.0 (含 VWAP 均價線濾網 / 破5日高 / 5分K量>=20張)，準備檢查 {len(res_df)} 檔強勢股...")
+    # 自動判斷目前是「盤中執行 (date_0 為昨收)」還是「盤後測試 (date_0 已是今收)」
+    is_after_hours_data = (str(date_0) == today_str)
 
-    for _, row in res_df.iterrows():
-        code = str(row['股票代號']).strip()
-        name = str(row['股票名稱']).strip() if '股票名稱' in row else ""
-        market = str(row['市場']).strip() if '市場' in row else "上市"
+    total_len = len(res_df)
+    print(f"🚀 啟動盤中極速五大策略引擎 (批次平行下載 / 破5日高 / 5分K量>=10張)，共檢查 {total_len} 檔...", flush=True)
 
+    # 建立股票資訊索引與 Yahoo Ticker 對照表
+    records = res_df.to_dict("records")
+    batch_size = 25
+    triggered_total = 0
+
+    for b_start in range(0, total_len, batch_size):
+        batch_rows = records[b_start:b_start + batch_size]
+        b_end = min(b_start + batch_size, total_len)
+        print(f"⏳ 正在批次掃描第 {b_start + 1} ~ {b_end} / {total_len} 檔...", flush=True)
+
+        ticker_map = {}
+        for row in batch_rows:
+            code = str(row['股票代號']).strip()
+            market = str(row.get('市場', '上市')).strip()
+            suffix = ".TWO" if "上櫃" in market else ".TW"
+            ticker_map[f"{code}{suffix}"] = row
+
+        tickers_list = list(ticker_map.keys())
         try:
-            val = row.get(f"{d1_s} 收盤")
-            if pd.isna(val) or val is None:
-                val = row.get("收盤價_0", row.get("收盤價_1", 0))
-            prev_close = float(str(val).replace(',', ''))
-        except Exception:
-            prev_close = 0.0
-
-        suffix = ".TWO" if "上櫃" in market else ".TW"
-        ticker_symbol = f"{code}{suffix}"
-
-        try:
-            stock = yf.Ticker(ticker_symbol)
-            if prev_close <= 0:
-                try:
-                    prev_close = float(stock.fast_info['previousClose'])
-                except Exception:
-                    pass
-
-            df_daily = stock.history(period="15d")
-            if df_daily is None or len(df_daily) < 6:
-                continue
-
-            recent_5_closes = df_daily['Close'].iloc[-6:-1] if len(df_daily) >= 6 else df_daily['Close'].iloc[:-1]
-            max_5d_close = float(recent_5_closes.max())
-
-            df_5m = stock.history(period="1d", interval="5m")
-            if (df_5m is None or len(df_5m) < 3) and suffix == ".TWO":
-                stock = yf.Ticker(f"{code}.TW")
-                df_5m = stock.history(period="1d", interval="5m")
-
-            if df_5m is None or len(df_5m) < 3:
-                continue
-
-            df_15m = stock.history(period="1d", interval="15m")
-
-            current_price = float(df_5m['Close'].iloc[-1])
-            is_above_5d_high = current_price > max_5d_close
-
-            # 【關鍵修正】：yfinance 單位為「股」，除以 1000.0 才是正確的「張」數！
-            v0_5m = float(df_5m['Volume'].iloc[-1]) / 1000.0
-            v1_5m = float(df_5m['Volume'].iloc[-2]) / 1000.0
-            # 若最新一根剛開棒未滿5分鐘，取最新根與前一根較大者評估流動性
-            effective_vol = max(v0_5m, v1_5m)
-
-            c0_5m = float(df_5m['Close'].iloc[-1])
-            o0_5m = float(df_5m['Open'].iloc[-1])
-            h0_5m = float(df_5m['High'].iloc[-1])
-
-            upper_shadow = h0_5m - max(c0_5m, o0_5m)
-            body = abs(c0_5m - o0_5m)
-
-            # 排除爆量長上影線出貨
-            is_blowoff = (v1_5m > 0 and v0_5m > v1_5m * 4.0 and c0_5m < o0_5m) or (
-                v1_5m > 0 and (v0_5m > v1_5m * 1.5) and (upper_shadow > max(body * 1.5, c0_5m * 0.015))
+            # 批次下載 5分K (大幅降低連線次數與等待時間)
+            batch_data = yf.download(
+                tickers=tickers_list,
+                period="1d",
+                interval="5m",
+                group_by="ticker",
+                threads=True,
+                progress=False,
+                timeout=10
             )
-
-            # 5分K 有效成交量 >= 20 張
-            is_liquid = effective_vol >= 20.0
-            is_volume_safe = is_liquid and (v1_5m > 0) and not is_blowoff
-
-            triggered_list, sig_data = check_all_intraday_signals(df_5m, df_15m, prev_close, is_volume_safe, is_above_5d_high)
-            if not triggered_list:
-                continue
-
-            c0_s = sig_data.get("c0")
-            pct_s = sig_data.get("pct_change")
-            vwap_s = sig_data.get("vwap", 0)
-            sign = "+" if pct_s >= 0 else ""
-            yh_link = f"https://tw.stock.yahoo.com/quote/{code}/technical-analysis"
-
-            strategy_titles = {
-                1: ("策略一：雙時框連拉", f"突破5日高＋站穩均價線 (`{vwap_s:.2f}`) 雙時框向上！"),
-                2: ("策略二：20分鐘高點突破", f"高檔抗跌帶量突破 20分高 (`{sig_data.get('max_h20', 0):.2f}`)！"),
-                3: ("策略三：主力階梯推升", f"站穩均價線 (`{vwap_s:.2f}`)，階梯式穩健墊高！"),
-                4: ("策略四：全日高檔鎖碼突破", f"全日高姿態整理，再度挑戰當日高 (`{sig_data.get('day_max', 0):.2f}`)！"),
-                5: ("策略五：5分K連續雙跳空", f"突破5日高且 5分K 連兩根跳空強攻！")
-            }
-
-            for s_id in triggered_list:
-                if s_id == 3 and 1 in triggered_list:
-                    continue
-                if s_id == 4 and 2 in triggered_list:
-                    continue
-                alert_key = f"{code}_S{s_id}"
-                if alert_key in sent_alerts:
-                    continue
-
-                title_str, status_str = strategy_titles[s_id]
-                msg = (
-                    f"🚨 *【{title_str}】*\n"
-                    f"• 股票: {name} ({code})\n"
-                    f"• 漲跌幅: `{sign}{pct_s:.2f}%` (現價: `{c0_s:.2f}` / 均價: `{vwap_s:.2f}`)\n"
-                    f"• 狀態: {status_str}\n"
-                    f"• 5分K量: `{effective_vol:.0f}張`\n"
-                    f"🔗 [Yahoo 技術線圖]({yh_link})"
-                )
-                print(msg)
-                send_telegram_message(msg)
-                sent_alerts.add(alert_key)
-
-            save_sent_alerts(today_str, sent_alerts)
-            time.sleep(0.4)
         except Exception as e:
-            print(f"⚠ 檢查股票 {code} ({name}) 時發生錯誤: {e}")
+            print(f"⚠ 批次下載發生例外: {e}", flush=True)
+            continue
 
+        if batch_data is None or batch_data.empty:
+            continue
+
+        for tk_sym, row in ticker_map.items():
+            code = str(row['股票代號']).strip()
+            name = str(row.get('股票名稱', '')).strip()
+
+            try:
+                if len(tickers_list) == 1:
+                    df_5m = batch_data.copy()
+                else:
+                    if tk_sym not in batch_data.columns.get_level_values(0):
+                        continue
+                    df_5m = batch_data[tk_sym].copy()
+
+                df_5m = df_5m.dropna(subset=['Close'])
+                if df_5m is None or len(df_5m) < 3:
+                    continue
+
+                # 直接從 df_merge 取出精準的昨收與近5日最高收盤，免去額外抓取 15d 日K
+                c0_daily = to_float(row.get('收盤價_0', 0))
+                c1_daily = to_float(row.get('收盤價_1', 0))
+                max5_prev = to_float(row.get('5日最高收盤', 0))
+
+                if is_after_hours_data:
+                    # 盤後執行：date_0 已是今天，故昨收為 收盤價_1，前5日最高收盤為 5日最高收盤
+                    prev_close = c1_daily
+                    max_5d_close = max5_prev
+                else:
+                    # 盤中執行：date_0 是昨天，故昨收為 收盤價_0，前5日最高收盤為 max(收盤價_0, 5日最高收盤)
+                    prev_close = c0_daily
+                    max_5d_close = max(c0_daily, max5_prev)
+
+                if prev_close <= 0 or max_5d_close <= 0:
+                    continue
+
+                current_price = float(df_5m['Close'].iloc[-1])
+                is_above_5d_high = current_price > max_5d_close
+                if not is_above_5d_high:
+                    continue
+
+                # 直接用 5分K 本地合成 15分K 收盤價，免去額外 API 請求
+                df_15m_close = df_5m['Close'].resample('15min').last().dropna()
+
+                # yfinance 成交量單位為「股」，除以 1000.0 轉換為「張」
+                v0_5m = float(df_5m['Volume'].iloc[-1]) / 1000.0
+                v1_5m = float(df_5m['Volume'].iloc[-2]) / 1000.0
+                effective_vol = max(v0_5m, v1_5m)
+
+                c0_5m = float(df_5m['Close'].iloc[-1])
+                o0_5m = float(df_5m['Open'].iloc[-1])
+                h0_5m = float(df_5m['High'].iloc[-1])
+
+                upper_shadow = h0_5m - max(c0_5m, o0_5m)
+                body = abs(c0_5m - o0_5m)
+
+                # 排除爆量收黑或長上影線出貨
+                is_blowoff = (v1_5m > 0 and v0_5m > v1_5m * 4.0 and c0_5m < o0_5m) or (
+                    v1_5m > 0 and (v0_5m > v1_5m * 1.8) and (upper_shadow > max(body * 1.5, c0_5m * 0.015))
+                )
+
+                # 5分K 有效量 >= 10 張
+                is_liquid = effective_vol >= 10.0
+                is_volume_safe = is_liquid and (v1_5m > 0) and not is_blowoff
+
+                triggered_list, sig_data = check_all_intraday_signals(
+                    df_5m, df_15m_close, prev_close, is_volume_safe, is_above_5d_high
+                )
+                if not triggered_list:
+                    continue
+
+                c0_s = sig_data.get("c0")
+                pct_s = sig_data.get("pct_change")
+                vwap_s = sig_data.get("vwap", 0)
+                sign = "+" if pct_s >= 0 else ""
+                yh_link = f"https://tw.stock.yahoo.com/quote/{code}/technical-analysis"
+
+                strategy_titles = {
+                    1: ("策略一：雙時框連拉", f"突破5日高＋站穩均價線 (`{vwap_s:.2f}`) 雙時框向上！"),
+                    2: ("策略二：20分鐘高點突破", f"高檔抗跌帶量突破 20分高 (`{sig_data.get('max_h20', 0):.2f}`)！"),
+                    3: ("策略三：主力階梯推升", f"站穩均價線 (`{vwap_s:.2f}`)，階梯式穩健墊高！"),
+                    4: ("策略四：全日高檔鎖碼突破", f"全日高姿態整理，再度挑戰當日高 (`{sig_data.get('day_max', 0):.2f}`)！"),
+                    5: ("策略五：5分K連續雙跳空", f"突破5日高且 5分K 連兩根跳空強攻！")
+                }
+
+                for s_id in triggered_list:
+                    if s_id == 3 and 1 in triggered_list:
+                        continue
+                    if s_id == 4 and 2 in triggered_list:
+                        continue
+                    alert_key = f"{code}_S{s_id}"
+                    if alert_key in sent_alerts:
+                        continue
+
+                    title_str, status_str = strategy_titles[s_id]
+                    msg = (
+                        f"🚨 *【{title_str}】*\n"
+                        f"• 股票: {name} ({code})\n"
+                        f"• 漲跌幅: `{sign}{pct_s:.2f}%` (現價: `{c0_s:.2f}` / 均價: `{vwap_s:.2f}`)\n"
+                        f"• 狀態: {status_str}\n"
+                        f"• 5分K量: `{effective_vol:.0f}張`\n"
+                        f"🔗 [Yahoo 技術線圖]({yh_link})"
+                    )
+                    print(msg, flush=True)
+                    send_telegram_message(msg)
+                    sent_alerts.add(alert_key)
+                    triggered_total += 1
+
+            except Exception as e:
+                print(f"⚠ 檢查股票 {code} ({name}) 時發生錯誤: {e}", flush=True)
+
+        save_sent_alerts(today_str, sent_alerts)
+
+    print(f"✅ 盤中即時監控掃描完畢！本次共觸發 {triggered_total} 則新訊號。", flush=True)
 # ==========================================
 # 盤後資料獲取核心
 # ==========================================

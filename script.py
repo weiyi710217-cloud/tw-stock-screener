@@ -244,11 +244,9 @@ def intraday_check_strategy(res_df, date_0):
                 max5_prev = to_float(row.get('5日最高收盤', 0))
 
                 if is_after_hours_data:
-                    # 盤後執行：date_0 已是今天，故昨收為 收盤價_1，前5日最高收盤為 5日最高收盤
                     prev_close = c1_daily
                     max_5d_close = max5_prev
                 else:
-                    # 盤中執行：date_0 是昨天，故昨收為 收盤價_0，前5日最高收盤為 max(收盤價_0, 5日最高收盤)
                     prev_close = c0_daily
                     max_5d_close = max(c0_daily, max5_prev)
 
@@ -333,6 +331,7 @@ def intraday_check_strategy(res_df, date_0):
         save_sent_alerts(today_str, sent_alerts)
 
     print(f"✅ 盤中即時監控掃描完畢！本次共觸發 {triggered_total} 則新訊號。", flush=True)
+
 # ==========================================
 # 盤後資料獲取核心
 # ==========================================
@@ -1070,7 +1069,6 @@ def main():
             hold_7 = hold_7 & (df_merge[f'外資_{k+j}'] >= 0) & (df_merge[f'投信_{k+j}'] >= 0)
         return c_high & vol_up & p_up & hold_7
 
-    # 【修正策略 11】：限定上櫃強勢長紅 (實體漲幅 >= 3.5% 且 量 >= 500張 且 大於5日均量1.3倍)
     def cond11_fn(k):
         c_k = df_merge[f'收盤價_{k}']
         o_k = df_merge[f'開盤價_{k}'] if f'開盤價_{k}' in df_merge else df_merge['開盤價_0']
@@ -1162,7 +1160,6 @@ def main():
         inst_safe = (df_merge[f'外資_{k}'] >= 0) | (df_merge[f'投信_{k}'] >= 0)
         return is_strong_k(k) & whale_locked & bullish_ma & vol_surge & launch_zone & inst_safe
 
-    # 【關鍵修正】：將策略 32 的法人3日集中度 >= 20% 條件正式寫入 cond32_fn
     def cond32_fn(k):
         whale = df_merge['千張大戶比例(%)'] >= 60.0
         ratio = (((df_merge[f'外資_{k}'] + df_merge[f'外資_{k+1}'] + df_merge[f'外資_{k+2}'] + df_merge[f'投信_{k}'] + df_merge[f'投信_{k+1}'] + df_merge[f'投信_{k+2}']) / (df_merge[f'成交量_{k}'] + df_merge[f'成交量_{k+1}'] + df_merge[f'成交量_{k+2}']).replace(0, np.nan)) * 100).fillna(0.0)
@@ -1218,6 +1215,69 @@ def main():
         except Exception:
             return pd.Series(False, index=df_merge.index)
 
+    # 【新增策略 36】：跳空突破且強勢整理 (Gap and Hold) + 外資投信零賣壓
+    def cond_gap_and_hold(k):
+        try:
+            total_hit = pd.Series(False, index=df_merge.index)
+            # 掃描過去第 m 天 (m = 2 ~ 6，代表跳空大漲後已經強勢橫盤整理了 1 ~ 5 個交易日)
+            for m in range(2, 7):
+                if f'收盤價_{k+m+1}' not in df_merge.columns:
+                    continue
+                c_m = df_merge[f'收盤價_{k+m}']
+                o_m = df_merge[f'開盤價_{k+m}']
+                h_m = df_merge[f'最高價_{k+m}']
+                l_m = df_merge[f'最低價_{k+m}']
+                v_m = df_merge[f'成交量_{k+m}']
+                c_m_prev = df_merge[f'收盤價_{k+m+1}']
+                h_m_prev = df_merge[f'最高價_{k+m+1}']
+
+                # 1. 第 k+m 日出現「向上跳空缺口」且「漲幅極大的長紅 K 棒」
+                has_gap = (l_m > c_m_prev) & (o_m > h_m_prev * 0.995) & (c_m_prev > 0)
+                pct_m = ((c_m - c_m_prev) / c_m_prev.replace(0, np.nan)) * 100
+                body_m = ((c_m - o_m) / o_m.replace(0, np.nan)) * 100
+                long_red_k = (pct_m >= 4.5) & (c_m > o_m) & (body_m >= 2.5) & (v_m >= 300)
+
+                # 2. 後續幾個交易日 (k ~ k+m-1) 皆未回補缺口，且「每日收盤價」穩穩站上跳空日「最高價(h_m)」之上
+                hold_above_high = pd.Series(True, index=df_merge.index)
+                post_closes = []
+                for j in range(m):
+                    c_j = df_merge[f'收盤價_{k+j}']
+                    l_j = df_merge[f'最低價_{k+j}']
+                    # 收盤價 >= 跳空日最高價，且最低價不補跳空缺口
+                    hold_above_high = hold_above_high & (c_j >= h_m) & (l_j > c_m_prev)
+                    post_closes.append(c_j)
+
+                # 橫盤強勢整理特徵：整理期間收盤價高低震幅收斂 (<= 8.5%)
+                df_post_c = pd.concat(post_closes, axis=1)
+                tight_consolidation = ((df_post_c.max(axis=1) - df_post_c.min(axis=1)) / h_m.replace(0, np.nan)) <= 0.085
+
+                # 3. 外資跟投信最近的買賣超都 >= 0 (完全無法人賣壓)，且期間合計買超 > 0
+                inst_window = max(m + 1, 5)
+                no_inst_sell = pd.Series(True, index=df_merge.index)
+                f_sum = pd.Series(0.0, index=df_merge.index)
+                t_sum = pd.Series(0.0, index=df_merge.index)
+                for j in range(inst_window):
+                    if f'外資_{k+j}' in df_merge.columns and f'投信_{k+j}' in df_merge.columns:
+                        f_j = df_merge[f'外資_{k+j}']
+                        t_j = df_merge[f'投信_{k+j}']
+                        no_inst_sell = no_inst_sell & (f_j >= 0) & (t_j >= 0)
+                        f_sum = f_sum + f_j
+                        t_sum = t_sum + t_j
+                inst_net_positive = no_inst_sell & (f_sum > 0) & (t_sum >= 0) & ((f_sum + t_sum) > 0)
+
+                # 今日維持一定流動性且非長上影線出貨黑K
+                c_k = df_merge[f'收盤價_{k}']
+                o_k = df_merge[f'開盤價_{k}']
+                v_k = df_merge[f'成交量_{k}']
+                today_healthy = (v_k >= 200) & (c_k >= o_k * 0.99)
+
+                cond_m = has_gap & long_red_k & hold_above_high & tight_consolidation & inst_net_positive & today_healthy
+                total_hit = total_hit | cond_m
+
+            return total_hit
+        except Exception:
+            return pd.Series(False, index=df_merge.index)
+
     def build_res(cond_fn, sort_cols, asc_list, rename_dict=None):
         cond = cond_fn(0)
         res = df_merge[cond].copy()
@@ -1266,6 +1326,7 @@ def main():
     res33 = build_res(cond33_fn, ["千張大戶比例(%)", "最新漲幅(%)"], [False, False], std_rename)
     res34 = build_res(cond_new_high_pullback, ["最新漲幅(%)", "增量倍數"], [False, False], std_rename)
     res35 = build_res(cond_super_bull_strategy, ["千張大戶比例(%)", "最新漲幅(%)"], [False, False], std_rename)
+    res36 = build_res(cond_gap_and_hold, ["技術評分(分)", "外資近七日(張)", "投信近七日(張)"], [False, False, False], std_rename)
 
     print("🔬 啟動策略 26：任意兩策略組合高勝率回測挖掘...")
     cand_strategies = [
@@ -1276,7 +1337,8 @@ def main():
         ("17.創120日高", cond17_fn), ("20.外資越買越多出量", cond20_fn),
         ("22.高勝率基因複合", cond22_fn), ("23.突破10日最大量", cond23_fn),
         ("32.大戶鎖碼法人集中", cond32_backtest_fn), ("33.絕對鎖碼突破", cond33_fn),
-        ("34.創新高回檔再攻", cond_new_high_pullback), ("35.飆股主升段基因", cond_super_bull_strategy)
+        ("34.創新高回檔再攻", cond_new_high_pullback), ("35.飆股主升段基因", cond_super_bull_strategy),
+        ("36.跳空強勢整理不賣", cond_gap_and_hold)
     ]
     sept_indices = [i for i, (d, _) in enumerate(days_data) if "20260901" <= d <= "20260930"]
     if not sept_indices:
@@ -1389,7 +1451,7 @@ def main():
         ("15.壓縮突破60日", res15), ("16.突破最大量高點", res16), ("17.創120日高", res17),
         ("20.外資越買越多出量", res20), ("22.高勝率基因複合", res22), ("23.突破10日最大量", res23),
         ("25.倚強科模式複製", res25), ("32.大戶鎖碼法人集中", initial_res32), ("33.絕對鎖碼突破", res33),
-        ("34.創新高回檔再攻", res34), ("35.飆股主升段基因", res35)
+        ("34.創新高回檔再攻", res34), ("35.飆股主升段基因", res35), ("36.跳空強勢整理不賣", res36)
     ]
     hit_counts, hit_names = {}, {}
     for s_name, res_df in st_lists:
@@ -1441,6 +1503,7 @@ def main():
     html_tb33 = get_html_tb(res33)
     html_tb34 = get_html_tb(res34)
     html_tb35 = get_html_tb(res35)
+    html_tb36 = get_html_tb(res36)
 
     # 策略分類標籤：core (核心首選), breakout (創高突破), chip (籌碼鎖碼), backtest (量化回測)
     strategies_meta = [
@@ -1448,6 +1511,7 @@ def main():
         ("Tab_Strat27", "core", f"🎖 組合首選 (勝率 {strat_results_27_31[27]['win_rate']}%)", f"兩策略組合：{strat_results_27_31[27]['combo_name']}。歷史回測勝率最高組合。", strat_results_27_31[27]["count"], strat_results_27_31[27]["html"]),
         ("Tab_Strat28", "core", f"🎖 組合第二 (勝率 {strat_results_27_31[28]['win_rate']}%)", f"兩策略組合：{strat_results_27_31[28]['combo_name']}。歷史回測高勝率組合。", strat_results_27_31[28]["count"], strat_results_27_31[28]["html"]),
         ("Tab_Strat35", "core", "🚀 飆股主升段基因", "【四大維度融合】千張大戶 >= 60% ＋ 5/20/60MA 多頭發散 ＋ 量增 1.2 倍 ＋ 法人護盤。", len(res35), html_tb35),
+        ("Tab_Strat36", "core", "🔥 跳空突破強勢整理 (Gap & Hold)", "【極強續航力】跳空長紅大漲後橫盤不補缺口，連日收盤皆站穩跳空日最高點之上＋外資投信零賣壓。", len(res36), html_tb36),
         ("Tab_Strat22", "core", "📈 高勝率基因精選", "【複合強勢】創 5 日高 ＋ 跳空缺口 ＋ 階梯式墊高 ＋ 量能放大 ＋ 法人無賣壓。", len(res22), html_tb22),
         ("Tab_Strat17", "breakout", "🏆 創 120 日半年新高", "【創高突破】最新收盤突破過去 120 日最高收盤價且紅K無長上影線。", len(res17), html_tb17),
         ("Tab_Strat4", "breakout", "🏆 創 20 日新高＋投信不賣", "【創高突破】收盤創 20 日新高 ＋ 近 7 天投信無賣超 ＋ 當日量增紅K。", len(res4), html_tb4),
@@ -1676,7 +1740,7 @@ def main():
         {warning_html}
         <div id="Dashboard" class="page-view">
             <div class="cat-bar">
-                <button class="cat-pill active" onclick="filterCategory('all', this)">全部策略 (24)</button>
+                <button class="cat-pill active" onclick="filterCategory('all', this)">全部策略 (25)</button>
                 <button class="cat-pill" onclick="filterCategory('core', this)">🔥 核心首選</button>
                 <button class="cat-pill" onclick="filterCategory('breakout', this)">🏆 創高突破</button>
                 <button class="cat-pill" onclick="filterCategory('chip', this)">👑 籌碼鎖碼</button>
@@ -2024,14 +2088,14 @@ def main():
     # ==========================================
     custom_watch_list = ["4912", "5508", "5483", "1321", "5465", "1334", "3631", "6277", "8171", "5426", "4577", "6525"]
 
-    # 1. 收集精選策略代號 + 手動自選股代號
+    # 1. 收集精選策略代號 + 手動自選股代號 (已納入 res36 跳空強勢整理股)
     watch_codes = set(custom_watch_list)
-    strat_dfs = [res12, res17, res22, res25, res35]
+    strat_dfs = [res12, res17, res22, res25, res35, res36]
     for s_df in strat_dfs:
         if isinstance(s_df, pd.DataFrame) and not s_df.empty and '股票代號' in s_df.columns:
             watch_codes.update(s_df['股票代號'].astype(str).str.strip().tolist())
 
-   # 2. 從未改名的 df_merge 提取盤中所需的關鍵欄位，存成輕量 JSON
+    # 2. 從未改名的 df_merge 提取盤中所需的關鍵欄位，存成輕量 JSON
     if watch_codes and not df_merge.empty:
         cols_Needed = ['股票代號', '股票名稱', '市場', '收盤價_0', '收盤價_1', '5日最高收盤']
         unique_target_df = (

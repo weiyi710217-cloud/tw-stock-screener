@@ -63,8 +63,11 @@ def send_telegram_message(message: str):
     except Exception as e:
         print(f"⚠ Telegram 連線錯誤: {e}")
 
-def check_all_intraday_signals(df_5m, df_15m, prev_close, is_volume_safe, is_above_10d_high):
-    if df_5m is None or len(df_5m) < 3 or not is_volume_safe or not is_above_10d_high:
+def check_all_intraday_signals(df_5m, df_15m, prev_close, is_volume_safe, is_above_5d_high):
+    """
+    【盤中訊號核心引擎】一次性計算共通變數，並判斷是否觸發五大策略
+    """
+    if df_5m is None or len(df_5m) < 3 or not is_volume_safe or not is_above_5d_high:
         return [], {}
 
     c0_5m = float(df_5m['Close'].iloc[-1])
@@ -83,6 +86,7 @@ def check_all_intraday_signals(df_5m, df_15m, prev_close, is_volume_safe, is_abo
     triggered_signals = []
     signal_data = {"c0": c0_5m, "pct_change": pct_change}
 
+    # 策略一：雙時框連續收盤向上墊高 (5分K >= 3根 且 15分K >= 3根)
     cond_5m_up = (c0_5m > c1_5m) and (c1_5m > c2_5m)
     cond_15m_up = False
     if df_15m is not None and len(df_15m) >= 3:
@@ -94,12 +98,14 @@ def check_all_intraday_signals(df_5m, df_15m, prev_close, is_volume_safe, is_abo
     if cond_5m_up and cond_15m_up:
         triggered_signals.append(1)
         
+    # 策略五：5分K連續跳空兩次 (需 >= 3根，09:15 即可觸發)
     gap1 = (o1_5m > c2_5m)
     gap2 = (o0_5m > c1_5m)
     strong_k = (c1_5m >= o1_5m) and (c0_5m >= o0_5m)
     if gap1 and gap2 and strong_k:
         triggered_signals.append(5)
 
+    # 策略三：主力階梯推升型態 (需 >= 5根)
     if len(df_5m) >= 5:
         c3_5m = float(df_5m['Close'].iloc[-4])
         is_step_up = cond_5m_up and (c2_5m > c3_5m)
@@ -107,6 +113,7 @@ def check_all_intraday_signals(df_5m, df_15m, prev_close, is_volume_safe, is_abo
         if is_step_up and is_price_stable:
             triggered_signals.append(3)
 
+    # 策略二：20分鐘高點突破 (需 >= 6根)
     if len(df_5m) >= 6:
         recent_4_closes = df_5m['Close'].iloc[-5:-1]
         recent_4_highs = df_5m['High'].iloc[-5:-1]
@@ -120,6 +127,7 @@ def check_all_intraday_signals(df_5m, df_15m, prev_close, is_volume_safe, is_abo
             triggered_signals.append(2)
             signal_data["max_h20"] = max_high_20m
 
+    # 策略四：高檔鎖碼橫盤突破 (需 >= 8根)
     if len(df_5m) >= 8:
         recent_highs = df_5m['High'].iloc[:-1]
         day_max_high = float(recent_highs.max())
@@ -140,7 +148,7 @@ def intraday_check_strategy(res_df, d1_s):
         print("ℹ 目前無符合的監控標的。")
         return
 
-    print(f"🚀 啟動盤中即時五大策略整合引擎偵測，準備檢查 {len(res_df)} 檔強勢股...")
+    print(f"🚀 啟動盤中即時五大策略整合引擎偵測 (09:15起 / 破5日高 / 量>=20張)，準備檢查 {len(res_df)} 檔強勢股...")
     
     for _, row in res_df.iterrows():
         code = str(row['股票代號']).strip()
@@ -167,22 +175,24 @@ def intraday_check_strategy(res_df, d1_s):
                 except Exception: pass
 
             df_daily = stock.history(period="15d")
-            if df_daily is None or len(df_daily) < 10: continue
+            if df_daily is None or len(df_daily) < 6: continue
                 
-            recent_10_closes = df_daily['Close'].iloc[-11:-1] if len(df_daily) >= 11 else df_daily['Close'].iloc[:-1]
-            max_10d_close = float(recent_10_closes.max())
+            # 【修改 2】：計算近 5 個交易日的最高收盤價（排除今日）
+            recent_5_closes = df_daily['Close'].iloc[-6:-1] if len(df_daily) >= 6 else df_daily['Close'].iloc[:-1]
+            max_5d_close = float(recent_5_closes.max())
 
+            # 【修改 1】：累積滿 3 根 5分K (即 09:15) 即可啟動偵測
             df_5m = stock.history(period="1d", interval="5m")
-            if (df_5m is None or len(df_5m) < 6) and suffix == ".TWO":
+            if (df_5m is None or len(df_5m) < 3) and suffix == ".TWO":
                 stock = yf.Ticker(f"{code}.TW")
                 df_5m = stock.history(period="1d", interval="5m")
 
-            if df_5m is None or len(df_5m) < 6: continue
+            if df_5m is None or len(df_5m) < 3: continue
                 
             df_15m = stock.history(period="1d", interval="15m")
             
             current_price = float(df_5m['Close'].iloc[-1])
-            is_above_10d_high = current_price > max_10d_close
+            is_above_5d_high = current_price > max_5d_close
 
             v0_5m = float(df_5m['Volume'].iloc[-1]) / 100.0
             v1_5m = float(df_5m['Volume'].iloc[-2]) / 100.0
@@ -194,11 +204,14 @@ def intraday_check_strategy(res_df, d1_s):
             upper_shadow = h0_5m - max(c0_5m, o0_5m)
             body = abs(c0_5m - o0_5m)
             
+            # 排除爆量出貨
             is_blowoff = (v0_5m > v1_5m * 3.0) or ((v0_5m > v1_5m * 1.5) and (upper_shadow > body * 1.5))
-            is_liquid = v0_5m >= 50
+            
+            # 【修改 3】：最新一根 5分K 成交量 >= 20 張，且前一根成交量 > 0
+            is_liquid = v0_5m >= 20
             is_volume_safe = is_liquid and (v1_5m > 0) and not is_blowoff
 
-            triggered_list, sig_data = check_all_intraday_signals(df_5m, df_15m, prev_close, is_volume_safe, is_above_10d_high)
+            triggered_list, sig_data = check_all_intraday_signals(df_5m, df_15m, prev_close, is_volume_safe, is_above_5d_high)
             
             if not triggered_list:
                 continue
@@ -212,7 +225,7 @@ def intraday_check_strategy(res_df, d1_s):
                 msg1 = f"🚨 *【策略一：雙時框連拉】*\n" \
                        f"• 股票: {name} ({code})\n" \
                        f"• 漲跌幅: `{sign}{pct_s:.2f}%` (現價: `{c0_s:.2f}`)\n" \
-                       f"• 狀態: 突破10日高且雙時框向上！\n" \
+                       f"• 狀態: 突破5日高且雙時框向上！\n" \
                        f"• 成交量: `{v0_5m:.1f}張`\n" \
                        f"🔗 [Yahoo 線圖點此 (請手動點5分)]({yh_link})"
                 print(msg1)
@@ -222,7 +235,7 @@ def intraday_check_strategy(res_df, d1_s):
                 msg2 = f"🚨 *【策略二：20分鐘高點突破】*\n" \
                        f"• 股票: {name} ({code})\n" \
                        f"• 漲跌幅: `{sign}{pct_s:.2f}%` (現價: `{c0_s:.2f}`)\n" \
-                       f"• 狀態: 高檔抗跌後帶量突破！\n" \
+                       f"• 狀態: 突破5日高，高檔抗跌後帶量突破！\n" \
                        f"• 20分高點: `{sig_data.get('max_h20'):.2f}`\n" \
                        f"🔗 [Yahoo 線圖點此 (請手動點5分)]({yh_link})"
                 print(msg2)
@@ -232,7 +245,7 @@ def intraday_check_strategy(res_df, d1_s):
                 msg3 = f"🚨 *【策略三：主力階梯推升】*\n" \
                        f"• 股票: {name} ({code})\n" \
                        f"• 漲跌幅: `{sign}{pct_s:.2f}%` (現價: `{c0_s:.2f}`)\n" \
-                       f"• 狀態: 階梯式穩健墊高，主力點火！\n" \
+                       f"• 狀態: 突破5日高，階梯式穩健墊高！\n" \
                        f"🔗 [Yahoo 線圖點此 (請手動點5分)]({yh_link})"
                 print(msg3)
                 send_telegram_message(msg3)
@@ -241,7 +254,7 @@ def intraday_check_strategy(res_df, d1_s):
                 msg4 = f"🚨 *【策略四：全日高檔鎖碼突破】*\n" \
                        f"• 股票: {name} ({code})\n" \
                        f"• 漲跌幅: `{sign}{pct_s:.2f}%` (現價: `{c0_s:.2f}`)\n" \
-                       f"• 狀態: 全日高姿態整理，準備再攻！\n" \
+                       f"• 狀態: 突破5日高，全日高姿態整理準備再攻！\n" \
                        f"• 當日高點: `{sig_data.get('day_max'):.2f}`\n" \
                        f"🔗 [Yahoo 線圖點此 (請手動點5分)]({yh_link})"
                 print(msg4)
@@ -251,7 +264,7 @@ def intraday_check_strategy(res_df, d1_s):
                 msg5 = f"🚨 *【策略五：5分K連續雙跳空】*\n" \
                        f"• 股票: {name} ({code})\n" \
                        f"• 漲跌幅: `{sign}{pct_s:.2f}%` (現價: `{c0_s:.2f}`)\n" \
-                       f"• 狀態: 5分K連續兩根跳空上漲，極度強勢！\n" \
+                       f"• 狀態: 突破5日高且5分K連兩根跳空上漲！\n" \
                        f"• 成交量: `{v0_5m:.1f}張`\n" \
                        f"🔗 [Yahoo 線圖點此 (請手動點5分)]({yh_link})"
                 print(msg5)

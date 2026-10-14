@@ -48,17 +48,18 @@ jobs:
         run: |
          python -u script.py
 
-      - name: 6. 準備發布檔案
+        # 在發布至 GitHub Pages 之前，先建立乾淨的發布目錄，只放 index.html
+      - name: 準備 GitHub Pages 檔案 (排除快取資料夾)
         run: |
-          mkdir -p public
-          cp index.html public/
-          touch public/.nojekyll
+          mkdir -p _site
+          cp index.html _site/index.html
 
-      - name: 7. 上傳發布產物
+      - name: 上傳 GitHub Pages 成品
         uses: actions/upload-pages-artifact@v3
         with:
-          path: public
+          path: '_site'   # 👈 關鍵！不要寫 '.'，改成只傳 _site 資料夾
 
       - name: 8. 發布至 GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+        timeout-minutes: 5

@@ -227,12 +227,12 @@ def intraday_check_strategy(res_df, date_0):
             name = str(row.get('股票名稱', '')).strip()
 
             try:
-                if len(tickers_list) == 1:
-                    df_5m = batch_data.copy()
-                else:
+                if isinstance(batch_data.columns, pd.MultiIndex):
                     if tk_sym not in batch_data.columns.get_level_values(0):
                         continue
                     df_5m = batch_data[tk_sym].copy()
+                else:
+                    df_5m = batch_data.copy()
 
                 df_5m = df_5m.dropna(subset=['Close'])
                 if df_5m is None or len(df_5m) < 3:
@@ -2019,28 +2019,24 @@ def main():
         f.write(html_content)
     print(f"\n✅ 網頁已生成: {html_filename}")
 
-    # ==========================================
+   # ==========================================
     # 執行盤中即時檢查 (收集精選策略中的股票 + 自定義強制監控股)
     # ==========================================
-    custom_watch_list = ["4912", "5508", "5483", "1321","5465","1334","3631","6277","8171","4912","5426","4577","6525"]
+    custom_watch_list = ["4912", "5508", "5483", "1321", "5465", "1334", "3631", "6277", "8171", "5426", "4577", "6525"]
 
-    target_dfs = []
-    strat_names = ['res12', 'res17', 'res22', 'res25', 'res35']
-    for df_name in strat_names:
-        if df_name in locals() and isinstance(locals()[df_name], pd.DataFrame) and not locals()[df_name].empty:
-            target_dfs.append(locals()[df_name])
+    # 1. 只收集各精選策略的「股票代號」，避免使用已經被 rename 欄位的 res_df
+    watch_codes = set(custom_watch_list)
+    strat_dfs = [res12, res17, res22, res25, res35]
+    for s_df in strat_dfs:
+        if isinstance(s_df, pd.DataFrame) and not s_df.empty and '股票代號' in s_df.columns:
+            watch_codes.update(s_df['股票代號'].astype(str).str.strip().tolist())
 
-    if custom_watch_list and 'df_merge' in locals() and not df_merge.empty:
-        custom_df = df_merge[df_merge['股票代號'].isin(custom_watch_list)].copy()
-        if not custom_df.empty:
-            target_dfs.append(custom_df)
-            print(f"📌 已將 {len(custom_df)} 檔「手動自選股」強制加入盤中監控清單！")
-
-    if target_dfs:
-        combined_df = pd.concat(target_dfs, ignore_index=True)
-        unique_target_df = combined_df.drop_duplicates(subset=['股票代號']).reset_index(drop=True)
-        print(f"\n🎯 總計擷取 {len(unique_target_df)} 檔不重複的強勢標的與自選股，送入即時引擎監控...")
-        intraday_check_strategy(unique_target_df, d1_s)
+    # 2. 統一從欄位名稱最完整、未改名的 df_merge 取出資料（確保擁有 收盤價_0, 收盤價_1, 5日最高收盤）
+    if watch_codes and not df_merge.empty:
+        unique_target_df = df_merge[df_merge['股票代號'].isin(watch_codes)].drop_duplicates(subset=['股票代號']).reset_index(drop=True)
+        print(f"\n📌 包含手動自選股，總計擷取 {len(unique_target_df)} 檔不重複強勢標的，送入即時引擎監控...")
+        # 3. 傳入正確的基準日字串 date_0 (例如 '20261014')，而非 d1_s ('10/13')
+        intraday_check_strategy(unique_target_df, date_0)
     else:
         print("\nℹ 目前無任何策略資料或自選股可供盤中監控。")
 

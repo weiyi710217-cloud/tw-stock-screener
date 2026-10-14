@@ -48,18 +48,17 @@ jobs:
         run: |
          python -u script.py
 
-        # 在發布至 GitHub Pages 之前，先建立乾淨的發布目錄，只放 index.html
-      - name: 準備 GitHub Pages 檔案 (排除快取資料夾)
+      # 建立乾淨的發布資料夾，解決上傳過大導致卡住的問題
+      - name: Prepare Pages Folder
         run: |
           mkdir -p _site
           cp index.html _site/index.html
 
-      - name: 上傳 GitHub Pages 成品
+      - name: Upload Pages Artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: '_site'   # 👈 關鍵！不要寫 '.'，改成只傳 _site 資料夾
+          path: '_site'
 
-      - name: 8. 發布至 GitHub Pages
+      - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-        timeout-minutes: 5

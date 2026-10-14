@@ -2020,25 +2020,37 @@ def main():
     print(f"\n✅ 網頁已生成: {html_filename}")
 
    # ==========================================
-    # 執行盤中即時檢查 (收集精選策略中的股票 + 自定義強制監控股)
+    # 匯出盤中監控專用輕量快取 (供 intraday_monitor.py 極速讀取)
     # ==========================================
     custom_watch_list = ["4912", "5508", "5483", "1321", "5465", "1334", "3631", "6277", "8171", "5426", "4577", "6525"]
 
-    # 1. 只收集各精選策略的「股票代號」，避免使用已經被 rename 欄位的 res_df
+    # 1. 收集精選策略代號 + 手動自選股代號
     watch_codes = set(custom_watch_list)
     strat_dfs = [res12, res17, res22, res25, res35]
     for s_df in strat_dfs:
         if isinstance(s_df, pd.DataFrame) and not s_df.empty and '股票代號' in s_df.columns:
             watch_codes.update(s_df['股票代號'].astype(str).str.strip().tolist())
 
-    # 2. 統一從欄位名稱最完整、未改名的 df_merge 取出資料（確保擁有 收盤價_0, 收盤價_1, 5日最高收盤）
+    # 2. 從未改名的 df_merge 提取盤中所需的關鍵欄位，存成輕量 JSON
     if watch_codes and not df_merge.empty:
-        unique_target_df = df_merge[df_merge['股票代號'].isin(watch_codes)].drop_duplicates(subset=['股票代號']).reset_index(drop=True)
-        print(f"\n📌 包含手動自選股，總計擷取 {len(unique_target_df)} 檔不重複強勢標的，送入即時引擎監控...")
-        # 3. 傳入正確的基準日字串 date_0 (例如 '20261014')，而非 d1_s ('10/13')
-        intraday_check_strategy(unique_target_df, date_0)
+        cols_Needed = ['股票代號', '股票名稱', '市場', '收盤價_0', '收盤價_1', '5日最高收盤']
+        unique_target_df = (
+            df_merge[df_merge['股票代號'].isin(watch_codes)][cols_Needed]
+            .drop_duplicates(subset=['股票代號'])
+            .reset_index(drop=True)
+        )
+        
+        watchlist_payload = {
+            "base_date": str(date_0),
+            "updated_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "stocks": unique_target_df.to_dict("records")
+        }
+        watchlist_path = os.path.join(CACHE_DIR, "intraday_watchlist.json")
+        with open(watchlist_path, "w", encoding="utf-8") as f:
+            json.dump(watchlist_payload, f, ensure_ascii=False, indent=2)
+        print(f"\n📌 已匯出 {len(unique_target_df)} 檔監控清單至: {watchlist_path}")
     else:
-        print("\nℹ 目前無任何策略資料或自選股可供盤中監控。")
+        print("\nℹ 目前無任何策略資料或自選股可供匯出。")
 
     if os.environ.get("GITHUB_ACTIONS") != "true":
         webbrowser.open(f"file:///{file_path}")

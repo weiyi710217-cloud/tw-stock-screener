@@ -2086,11 +2086,11 @@ def main():
     # ==========================================
     # 匯出盤中監控專用輕量快取 (供 intraday_monitor.py 極速讀取)
     # ==========================================
-    custom_watch_list = ["4912", "5508", "5483", "1321", "5465", "1334", "3631", "6277", "8171", "5426", "4577", "6525"]
+    custom_watch_list = ["4912", "5508", "5483", "1321", "5465", "1334", "3631", "6277", "8171", "5426", "4577", "6525","1319", "6122", "2006", "6605","1319"]
 
     # 1. 收集精選策略代號 + 手動自選股代號 (已納入 res36 跳空強勢整理股)
     watch_codes = set(custom_watch_list)
-    strat_dfs = [res12, res17, res22, res25, res35, res36]
+    strat_dfs = [res2, res17, res22, res25, res35, res36]
     for s_df in strat_dfs:
         if isinstance(s_df, pd.DataFrame) and not s_df.empty and '股票代號' in s_df.columns:
             watch_codes.update(s_df['股票代號'].astype(str).str.strip().tolist())

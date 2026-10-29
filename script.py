@@ -1119,7 +1119,7 @@ def main():
         max_h = df_merge['近10日最大量日最高價'] if k == 0 else df_merge.apply(lambda r: _get_max_high_at(r, k), axis=1)
         return is_strong_k(k) & (max_h > 0) & (df_merge[f'收盤價_{k}'] > max_h)
 
-    # 策略 25：穩健法人鎖碼型（啟發自 宏正 6277）
+    # 策略 25：穩健法人鎖碼型
     def cond25_fn(k):
         try:
             c_k = df_merge[f'收盤價_{k}']
@@ -1136,7 +1136,7 @@ def main():
         except Exception:
             return pd.Series(False, index=df_merge.index)
 
-    # 策略 37：資訊服務成長突破型（啟發自 智聯服務 6751）
+    # 策略 37：資訊服務成長突破型
     def cond37_fn(k):
         try:
             c_k = df_merge[f'收盤價_{k}']
@@ -1152,7 +1152,7 @@ def main():
         except Exception:
             return pd.Series(False, index=df_merge.index)
 
-    # 策略 38：低價成交量暴增動能型（啟發自 律勝 3354）
+    # 策略 38：低價成交量暴增動能型
     def cond38_fn(k):
         try:
             c_k = df_merge[f'收盤價_{k}']
@@ -1167,7 +1167,7 @@ def main():
             return pd.Series(False, index=df_merge.index)
 
     # ==========================================
-    # 【新增策略 39：極致大戶鎖碼強勢跳空突破】
+    # 【策略 39：極致大戶強勢量增（改為：低點過昨低、高點過昨高）】
     # ==========================================
     def cond39_fn(k):
         try:
@@ -1177,10 +1177,14 @@ def main():
             vol_up = (v_k >= v_prev * 1.3) & (v_prev > 0) & (v_k >= 200)
 
             l_k = df_merge[f'最低價_{k}']
+            l_prev = df_merge[f'最低價_{k+1}']
+            h_k = df_merge[f'最高價_{k}']
             h_prev = df_merge[f'最高價_{k+1}']
-            gap_above_high = (l_k > h_prev) & (h_prev > 0)
+            
+            # 最新一日的低點大於昨日低點，最新一日的高點大於昨日高點
+            higher_high_low = (l_k > l_prev) & (h_k > h_prev) & (h_prev > 0)
 
-            return is_strong_k(k) & whale_80 & vol_up & gap_above_high
+            return is_strong_k(k) & whale_80 & vol_up & higher_high_low
         except Exception:
             return pd.Series(False, index=df_merge.index)
 
@@ -1550,7 +1554,7 @@ def main():
         ("Tab_Strat1", "breakout", "📈 向上跳空不補＋連續量增", "【強勢缺口】當日最低價 >= 前日收盤價 ＋ 成交量放大且收強勢紅 K。", len(res1), html_tb1),
         ("Tab_Strat34", "breakout", "🚀 創新高回檔再攻", "【回檔再攻】過去 20 天曾創 180 天新高 ＋ 回檔洗盤後重回前高 5% 攻擊區。", len(res34), html_tb34),
         ("Tab_Strat11", "breakout", "🎯 上櫃實體長紅強勢股", "【中小型強勢】上櫃股票 ＋ 實體紅K漲幅 >= 3.5% ＋ 量 >= 500張且大於5日均量1.3倍。", len(res11), html_tb11),
-        ("Tab_Strat39", "chip", "👑 極致大戶跳空突破 (大戶>80%)", "【主力絕對鎖碼】千張大戶 >= 80% ＋ 成交量放大 1.3 倍 ＋ 當日低點大於昨日高點（強勢跳空）。", len(res39), html_tb39),
+        ("Tab_Strat39", "chip", "👑 極致大戶量增創高 (大戶>80%)", "【主力絕對鎖碼】千張大戶 >= 80% ＋ 成交量放大 1.3 倍 ＋ 當日低點大於昨低、高點大於昨高（底底高、頭頭高）。", len(res39), html_tb39),
         ("Tab_Strat33", "chip", "👑 絕對鎖碼 (大戶>70%)", "【主力重壓】千張大戶 > 70% ＋ 5/20/60MA 多頭排列 ＋ 逼近半年高點。", len(res33), html_tb33),
         ("Tab_Strat32", "chip", "👑 大戶鎖碼＋法人集中度", "【籌碼高度集中】千張大戶 >= 60% ＋ 近 3 日外資投信買超佔成交量 >= 20%。", len(initial_res32), html_tb32),
         ("Tab_Strat2", "chip", "📈 階梯式墊高＋外資點火", "【步步為營】股價階梯墊高不破前日收盤 ＋ 外資投信連 7 日無賣超。", len(res2), html_tb2),

@@ -1119,9 +1119,6 @@ def main():
         max_h = df_merge['近10日最大量日最高價'] if k == 0 else df_merge.apply(lambda r: _get_max_high_at(r, k), axis=1)
         return is_strong_k(k) & (max_h > 0) & (df_merge[f'收盤價_{k}'] > max_h)
 
-    # ==========================================
-    # 【全新設計策略 25、37、38】
-    # ==========================================
     # 策略 25：穩健法人鎖碼型（啟發自 宏正 6277）
     def cond25_fn(k):
         try:
@@ -1166,6 +1163,24 @@ def main():
             vol_surge = (v_k >= v_1 * 2.2) & (v_1 > 0) & (v_k >= 300)
             strong_body = (body_pct >= 3.0) & (c_k > o_k)
             return is_strong_k(k) & vol_surge & strong_body
+        except Exception:
+            return pd.Series(False, index=df_merge.index)
+
+    # ==========================================
+    # 【新增策略 39：極致大戶鎖碼強勢跳空突破】
+    # ==========================================
+    def cond39_fn(k):
+        try:
+            whale_80 = df_merge['千張大戶比例(%)'] >= 80.0
+            v_k = df_merge[f'成交量_{k}']
+            v_prev = df_merge[f'成交量_{k+1}']
+            vol_up = (v_k >= v_prev * 1.3) & (v_prev > 0) & (v_k >= 200)
+
+            l_k = df_merge[f'最低價_{k}']
+            h_prev = df_merge[f'最高價_{k+1}']
+            gap_above_high = (l_k > h_prev) & (h_prev > 0)
+
+            return is_strong_k(k) & whale_80 & vol_up & gap_above_high
         except Exception:
             return pd.Series(False, index=df_merge.index)
 
@@ -1325,6 +1340,7 @@ def main():
     res25 = build_res(cond25_fn, ["千張大戶比例(%)", "最新漲幅(%)"], [False, False], std_rename)
     res37 = build_res(cond37_fn, ["最新漲幅(%)", "增量倍數"], [False, False], std_rename)
     res38 = build_res(cond38_fn, ["實體K漲幅(%)", "增量倍數"], [False, False], std_rename)
+    res39 = build_res(cond39_fn, ["千張大戶比例(%)", "最新漲幅(%)", "增量倍數"], [False, False, False], std_rename)
     initial_res32 = build_res(cond32_fn, ["法人3日集中度(%)", "最新漲幅(%)"], [False, False], inst_rename)
     res33 = build_res(cond33_fn, ["千張大戶比例(%)", "最新漲幅(%)"], [False, False], std_rename)
     res34 = build_res(cond_new_high_pullback, ["最新漲幅(%)", "增量倍數"], [False, False], std_rename)
@@ -1341,7 +1357,8 @@ def main():
         ("22.高勝率基因複合", cond22_fn), ("23.突破10日最大量", cond23_fn),
         ("25.穩健法人鎖碼", cond25_fn), ("32.大戶鎖碼法人集中", cond32_backtest_fn), ("33.絕對鎖碼突破", cond33_fn),
         ("34.創新高回檔再攻", cond_new_high_pullback), ("35.飆股主升段基因", cond_super_bull_strategy),
-        ("36.跳空強勢整理不賣", cond_gap_and_hold), ("37.資訊服務成長突破", cond37_fn), ("38.低價量暴增動能", cond38_fn)
+        ("36.跳空強勢整理不賣", cond_gap_and_hold), ("37.資訊服務成長突破", cond37_fn), ("38.低價量暴增動能", cond38_fn),
+        ("39.極致大戶跳空量增", cond39_fn)
     ]
 
     sept_indices = [i for i, (d, _) in enumerate(days_data) if "20260901" <= d <= "20260930"]
@@ -1455,7 +1472,7 @@ def main():
         ("20.外資越買越多出量", res20), ("22.高勝率基因複合", res22), ("23.突破10日最大量", res23),
         ("25.穩健法人鎖碼", res25), ("32.大戶鎖碼法人集中", initial_res32), ("33.絕對鎖碼突破", res33),
         ("34.創新高回檔再攻", res34), ("35.飆股主升段基因", res35), ("36.跳空強勢整理不賣", res36),
-        ("37.資訊服務成長突破", res37), ("38.低價量暴增動能", res38)
+        ("37.資訊服務成長突破", res37), ("38.低價量暴增動能", res38), ("39.極致大戶跳空量增", res39)
     ]
     hit_counts, hit_names = {}, {}
     for s_name, res_df in st_lists:
@@ -1510,6 +1527,7 @@ def main():
     html_tb36 = get_html_tb(res36)
     html_tb37 = get_html_tb(res37)
     html_tb38 = get_html_tb(res38)
+    html_tb39 = get_html_tb(res39)
 
     strategies_meta = [
         ("Tab_Strat12", "core", "🌟 綜合排行", "統計所有選股策略下，累計入選次數最多且大戶>=30%之最強勢標的。", len(res12), html_tb12),
@@ -1532,6 +1550,7 @@ def main():
         ("Tab_Strat1", "breakout", "📈 向上跳空不補＋連續量增", "【強勢缺口】當日最低價 >= 前日收盤價 ＋ 成交量放大且收強勢紅 K。", len(res1), html_tb1),
         ("Tab_Strat34", "breakout", "🚀 創新高回檔再攻", "【回檔再攻】過去 20 天曾創 180 天新高 ＋ 回檔洗盤後重回前高 5% 攻擊區。", len(res34), html_tb34),
         ("Tab_Strat11", "breakout", "🎯 上櫃實體長紅強勢股", "【中小型強勢】上櫃股票 ＋ 實體紅K漲幅 >= 3.5% ＋ 量 >= 500張且大於5日均量1.3倍。", len(res11), html_tb11),
+        ("Tab_Strat39", "chip", "👑 極致大戶跳空突破 (大戶>80%)", "【主力絕對鎖碼】千張大戶 >= 80% ＋ 成交量放大 1.3 倍 ＋ 當日低點大於昨日高點（強勢跳空）。", len(res39), html_tb39),
         ("Tab_Strat33", "chip", "👑 絕對鎖碼 (大戶>70%)", "【主力重壓】千張大戶 > 70% ＋ 5/20/60MA 多頭排列 ＋ 逼近半年高點。", len(res33), html_tb33),
         ("Tab_Strat32", "chip", "👑 大戶鎖碼＋法人集中度", "【籌碼高度集中】千張大戶 >= 60% ＋ 近 3 日外資投信買超佔成交量 >= 20%。", len(initial_res32), html_tb32),
         ("Tab_Strat2", "chip", "📈 階梯式墊高＋外資點火", "【步步為營】股價階梯墊高不破前日收盤 ＋ 外資投信連 7 日無賣超。", len(res2), html_tb2),
@@ -1720,7 +1739,7 @@ def main():
         {warning_html}
         <div id="Dashboard" class="page-view">
             <div class="cat-bar">
-                <button class="cat-pill active" onclick="filterCategory('all', this)">全部策略 (26)</button>
+                <button class="cat-pill active" onclick="filterCategory('all', this)">全部策略 (27)</button>
                 <button class="cat-pill" onclick="filterCategory('core', this)">🔥 核心首選</button>
                 <button class="cat-pill" onclick="filterCategory('breakout', this)">🏆 創高突破</button>
                 <button class="cat-pill" onclick="filterCategory('chip', this)">👑 籌碼鎖碼</button>
@@ -2029,7 +2048,7 @@ def main():
 
     custom_watch_list = ["6277", "6751", "3354", "5508", "5483", "1321", "5465", "1334", "3631", "8171", "5426", "4577", "6525", "1319", "6122", "2006", "6605"]
     watch_codes = set(custom_watch_list)
-    strat_dfs = [res2, res17, res22, res25, res35, res36, res37, res38]
+    strat_dfs = [res2, res17, res22, res25, res35, res36, res37, res38, res39]
     for s_df in strat_dfs:
         if isinstance(s_df, pd.DataFrame) and not s_df.empty and '股票代號' in s_df.columns:
             watch_codes.update(s_df['股票代號'].astype(str).str.strip().tolist())

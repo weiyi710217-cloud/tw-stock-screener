@@ -794,7 +794,6 @@ def main():
     # ==========================
     # 精簡化後的 12 大核心策略函式
     # ==========================
-    # S15: 壓縮突破 60 日高
     def cond15_fn(k):
         c_k = df_merge[f'收盤價_{k}']
         close_60 = [f'收盤價_{k+j}' for j in range(1, 61)]
@@ -802,7 +801,6 @@ def main():
         vol_up = df_merge[f'成交量_{k}'] >= df_merge[f'成交量_{k+1}'] * 1.2
         return is_strong_k(k) & vol_up & (c_k >= max_60)
 
-    # S16: 突破 60 天最大量高點
     def cond16_fn(k):
         def _get_60d_max_vol_high_at(row, offset):
             try:
@@ -820,7 +818,6 @@ def main():
         for j in range(7): hold_7 = hold_7 & (df_merge[f'外資_{k+j}'] >= 0) & (df_merge[f'投信_{k+j}'] >= 0)
         return breakout & hold_7
 
-    # S22: 高勝率基因複合 (跳空+墊高+量增+創5日高)
     def cond22_fn(k):
         close_5 = [f'收盤價_{k+j}' for j in range(1, 6)]
         max_5 = df_merge[close_5].max(axis=1)
@@ -831,13 +828,11 @@ def main():
         hold_3 = (df_merge[f'外資_{k}'] >= 0) & (df_merge[f'投信_{k}'] >= 0) & (df_merge[f'外資_{k+1}'] >= 0) & (df_merge[f'投信_{k+1}'] >= 0) & (df_merge[f'外資_{k+2}'] >= 0) & (df_merge[f'投信_{k+2}'] >= 0)
         return c_high5 & gap_up & step_up & vol_up & hold_3
 
-    # S32: 大戶鎖碼 + 法人3日集中度 >= 20%
     def cond32_fn(k):
         whale = df_merge['千張大戶比例(%)'] >= 60.0
         ratio = (((df_merge[f'外資_{k}'] + df_merge[f'外資_{k+1}'] + df_merge[f'外資_{k+2}'] + df_merge[f'投信_{k}'] + df_merge[f'投信_{k+1}'] + df_merge[f'投信_{k+2}']) / (df_merge[f'成交量_{k}'] + df_merge[f'成交量_{k+1}'] + df_merge[f'成交量_{k+2}']).replace(0, np.nan)) * 100).fillna(0.0)
         return is_strong_k(k) & whale & (ratio >= 20.0)
 
-    # S34: 創新高回檔洗盤再攻
     def cond34_fn(k):
         try:
             close_cols_180 = [f'收盤價_{k+j}' for j in range(1, 181) if f'收盤價_{k+j}' in df_merge.columns]
@@ -854,7 +849,6 @@ def main():
             return is_strong_k(k) & ever_hit_high & had_pullback & near_high_now
         except: return pd.Series(False, index=df_merge.index)
 
-    # S35: 主升段均線多頭發散 (結合大戶>50%與法人買盤)
     def cond35_fn(k):
         try:
             c_k, v_k, v_1 = df_merge[f'收盤價_{k}'], df_merge[f'成交量_{k}'], df_merge[f'成交量_{k+1}']
@@ -870,7 +864,6 @@ def main():
             return is_strong_k(k) & whale_locked & bullish_ma & vol_surge & inst_safe
         except: return pd.Series(False, index=df_merge.index)
 
-    # S36: 跳空強勢整理不破 (Gap & Hold)
     def cond36_fn(k):
         try:
             total_hit = pd.Series(False, index=df_merge.index)
@@ -878,7 +871,6 @@ def main():
                 if f'收盤價_{k+m+1}' not in df_merge.columns: continue
                 c_m, o_m, h_m, l_m, v_m = df_merge[f'收盤價_{k+m}'], df_merge[f'開盤價_{k+m}'], df_merge[f'最高價_{k+m}'], df_merge[f'最低價_{k+m}'], df_merge[f'成交量_{k+m}']
                 c_m_prev, h_m_prev = df_merge[f'收盤價_{k+m+1}'], df_merge[f'最高價_{k+m+1}']
-
                 has_gap = (l_m > c_m_prev) & (o_m > h_m_prev * 0.995) & (c_m_prev > 0)
                 pct_m = ((c_m - c_m_prev) / c_m_prev.replace(0, np.nan)) * 100
                 body_m = ((c_m - o_m) / o_m.replace(0, np.nan)) * 100
@@ -907,7 +899,6 @@ def main():
             return total_hit
         except: return pd.Series(False, index=df_merge.index)
 
-    # S37: 創 20 日新高量增法人鎖碼
     def cond37_fn(k):
         try:
             c_k = df_merge[f'收盤價_{k}']
@@ -921,7 +912,6 @@ def main():
             return is_strong_k(k) & break_20 & vol_ok & f_0 & t_0
         except: return pd.Series(False, index=df_merge.index)
 
-    # S38: 底部低價暴量動能起漲
     def cond38_fn(k):
         try:
             c_k = df_merge[f'收盤價_{k}']
@@ -933,7 +923,6 @@ def main():
             return is_strong_k(k) & vol_surge & strong_body
         except: return pd.Series(False, index=df_merge.index)
 
-    # S39: 極致大戶(>80%)強勢創高
     def cond39_fn(k):
         try:
             whale_80 = df_merge['千張大戶比例(%)'] >= 80.0
@@ -945,7 +934,6 @@ def main():
             return is_strong_k(k) & whale_80 & vol_up & higher_high_low
         except: return pd.Series(False, index=df_merge.index)
 
-    # S40: 飆股初升段點火 (大戶>50% + 創60日高 + 法人點火 + 量增1.5倍)
     def cond40_fn(k):
         try:
             c_k, v_k, v_prev = df_merge[f'收盤價_{k}'], df_merge[f'成交量_{k}'], df_merge[f'成交量_{k+1}']
@@ -962,31 +950,23 @@ def main():
             return is_strong_k(k) & whale & inst_fire & bullish_ma & breakout_60 & vol_surge
         except: return pd.Series(False, index=df_merge.index)
 
-    # S41: 極致大戶連續滾量創高 (大戶>80% + 連兩日量>半年均量2倍 + 法人無賣超 + 高過高)
     def cond41_fn(k):
         try:
             vol_120 = [f'成交量_{k+j}' for j in range(1, 121) if f'成交量_{k+j}' in df_merge.columns]
             if not vol_120: return pd.Series(False, index=df_merge.index)
             mv120_k = df_merge[vol_120].mean(axis=1)
-            
             v_k, v_prev = df_merge[f'成交量_{k}'], df_merge[f'成交量_{k+1}']
             vol_surge = (v_k >= mv120_k * 2) & (v_prev >= mv120_k * 2) & (mv120_k > 0)
-            
             whale_80 = df_merge['千張大戶比例(%)'] >= 80.0
-            
             f_k, t_k = df_merge[f'外資_{k}'], df_merge[f'投信_{k}']
             f_prev, t_prev = df_merge[f'外資_{k+1}'], df_merge[f'投信_{k+1}']
             inst_safe = (f_k >= 0) & (t_k >= 0) & (f_prev >= 0) & (t_prev >= 0)
-            
             h_k, h_prev = df_merge[f'最高價_{k}'], df_merge[f'最高價_{k+1}']
             h_prev2 = df_merge[f'最高價_{k+2}'] if f'最高價_{k+2}' in df_merge.columns else h_prev
             higher_highs = (h_k > h_prev) & (h_prev > h_prev2)
-            
             return is_strong_k(k) & whale_80 & vol_surge & inst_safe & higher_highs
-        except Exception:
-            return pd.Series(False, index=df_merge.index)
+        except: return pd.Series(False, index=df_merge.index)
 
-    # 建立結果集
     def build_res(cond_fn, sort_cols, asc_list, rename_dict=None):
         cond = cond_fn(0)
         res = df_merge[cond].copy()
@@ -1016,23 +996,16 @@ def main():
 
     print("🔬 正在執行策略組合與回測計算...")
     cand_strategies = [
-        ("15.壓縮突破60日", cond15_fn),
-        ("16.突破最大量高點", cond16_fn),
-        ("22.高勝率短線基因", cond22_fn),
-        ("32.籌碼鎖碼集中", cond32_fn),
-        ("34.創新高回檔再攻", cond34_fn),
-        ("35.主升段均線發散", cond35_fn),
-        ("36.跳空缺口不破", cond36_fn),
-        ("37.創20日新高鎖碼", cond37_fn),
-        ("38.暴量起漲動能", cond38_fn),
-        ("39.極致大戶強勢", cond39_fn),
-        ("40.飆股初升段點火", cond40_fn),
-        ("41.極致大戶連滾量", cond41_fn)
+        ("15.壓縮突破60日", cond15_fn), ("16.突破最大量高點", cond16_fn),
+        ("22.高勝率短線基因", cond22_fn), ("32.籌碼鎖碼集中", cond32_fn),
+        ("34.創新高回檔再攻", cond34_fn), ("35.主升段均線發散", cond35_fn),
+        ("36.跳空缺口不破", cond36_fn), ("37.創20日新高鎖碼", cond37_fn),
+        ("38.暴量起漲動能", cond38_fn), ("39.極致大戶強勢", cond39_fn),
+        ("40.飆股初升段點火", cond40_fn), ("41.極致大戶連滾量", cond41_fn)
     ]
 
     sept_indices = [i for i, (d, _) in enumerate(days_data) if "20260901" <= d <= "20260930"]
-    if not sept_indices:
-        sept_indices = list(range(5, min(25, len(days_data)-5)))
+    if not sept_indices: sept_indices = list(range(5, min(25, len(days_data)-5)))
     idx_1001 = next((i for i, (d, _) in enumerate(days_data) if d == "20261001"), None)
     if idx_1001 is None:
         oct_indices = [i for i, (d, _) in enumerate(days_data) if d.startswith("202610")]
@@ -1129,8 +1102,23 @@ def main():
     df_strat21_show["隔日平均報酬(%)"] = df_strat21_show["隔日平均報酬(%)"].apply(color_pct)
     html_tb21 = df_strat21_show.to_html(index=False, classes="styled-table backtest-table sortable-table", escape=False)
 
+    # 🟢 修正 eval() 作用域盲點：顯式綁定對應的 DataFrame
+    st_lists = [
+        ("15.壓縮突破60日", res15),
+        ("16.突破最大量高點", res16),
+        ("22.高勝率短線基因", res22),
+        ("32.籌碼鎖碼集中", res32),
+        ("34.創新高回檔再攻", res34),
+        ("35.主升段均線發散", res35),
+        ("36.跳空缺口不破", res36),
+        ("37.創20日新高鎖碼", res37),
+        ("38.暴量起漲動能", res38),
+        ("39.極致大戶強勢", res39),
+        ("40.飆股初升段點火", res40),
+        ("41.極致大戶連滾量", res41)
+    ]
+
     hit_counts, hit_names = {}, {}
-    st_lists = [(name, eval(f"res{name.split('.')[0]}")) for name, _ in cand_strategies]
     for s_name, res_df in st_lists:
         if res_df.empty or "股票代號" not in res_df.columns: continue
         for code in res_df['股票代號'].values:
@@ -1154,7 +1142,13 @@ def main():
         valid_cols = [c for c in base_cols + ["增量倍數"] + chip_cols if c in df_res.columns]
         return apply_color_formatting(df_res[valid_cols]).to_html(index=False, classes="styled-table sortable-table", escape=False)
 
-    html_tbs = {num: get_html_tb(eval(f"res{num}")) for num in [15, 16, 22, 32, 34, 35, 36, 37, 38, 39, 40, 41]}
+    # 🟢 修正 eval() 作用域盲點：顯式呼叫生成 HTML
+    html_tbs = {
+        15: get_html_tb(res15), 16: get_html_tb(res16), 22: get_html_tb(res22),
+        32: get_html_tb(res32), 34: get_html_tb(res34), 35: get_html_tb(res35),
+        36: get_html_tb(res36), 37: get_html_tb(res37), 38: get_html_tb(res38),
+        39: get_html_tb(res39), 40: get_html_tb(res40), 41: get_html_tb(res41)
+    }
 
     strategies_meta = [
         ("Tab_Strat12", "core", "🌟 綜合排行", "統計所有選股策略下，累計入選次數最多且大戶>=30%之最強勢標的。", len(res12), html_tb12),

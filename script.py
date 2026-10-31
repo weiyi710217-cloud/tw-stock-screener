@@ -545,6 +545,7 @@ def get_tdcc_data() -> pd.DataFrame:
     df_cached = safe_read_csv(cache_file, dtype={"股票代號": str})
     if not df_cached.empty:
         return df_cached
+        
     print("🌐 抓取【集保千張大戶】...")
     url = "https://smart.tdcc.com.tw/opendata/getOD.ashx?id=1-5"
     for _ in range(2):
@@ -570,7 +571,23 @@ def get_tdcc_data() -> pd.DataFrame:
         except Exception:
             pass
         time.sleep(0.5)
-    WARNINGS.append("千張大戶資料 抓取失敗")
+        
+    WARNINGS.append("千張大戶資料抓取失敗或為空，已切換至歷史舊版資料")
+    
+    # 如果抓不到或資料為空，則去 CACHE_DIR 找尋最新的舊版檔案沿用
+    try:
+        files = [f for f in os.listdir(CACHE_DIR) if f.startswith('tdcc_') and f.endswith('.csv')]
+        if files:
+            files.sort(reverse=True) # 檔名日期由大到小排序，確保取到最新
+            for f in files:
+                old_path = os.path.join(CACHE_DIR, f)
+                df_old = safe_read_csv(old_path, dtype={"股票代號": str})
+                if not df_old.empty:
+                    print(f"✅ 自動載入歷史大戶快取沿用: {f}")
+                    return df_old
+    except Exception:
+        pass
+
     return pd.DataFrame(columns=["股票代號", "千張大戶比例(%)"])
 
 def get_foreign_holdings() -> pd.DataFrame:
@@ -1181,10 +1198,39 @@ def main():
             h_k = df_merge[f'最高價_{k}']
             h_prev = df_merge[f'最高價_{k+1}']
             
-            # 最新一日的低點大於昨日低點，最新一日的高點大於昨日高點
             higher_high_low = (l_k > l_prev) & (h_k > h_prev) & (h_prev > 0)
 
             return is_strong_k(k) & whale_80 & vol_up & higher_high_low
+        except Exception:
+            return pd.Series(False, index=df_merge.index)
+
+    # ==========================================
+    # 【策略 40：飆股初升段點火基因 (主升段發動型)】
+    # ==========================================
+    def cond40_fn(k):
+        try:
+            c_k = df_merge[f'收盤價_{k}']
+            v_k = df_merge[f'成交量_{k}']
+            v_prev = df_merge[f'成交量_{k+1}']
+            
+            # 1. 籌碼：大戶具備控盤力道 (>= 50%)，且今日外資或投信進場點火
+            whale = df_merge['千張大戶比例(%)'] >= 50.0
+            inst_fire = (df_merge[f'外資_{k}'] > 0) | (df_merge[f'投信_{k}'] > 0)
+            
+            # 2. 均線與創高：均線多頭排列，且今日收盤創近期 60 日新高
+            ma5_k = df_merge[[f'收盤價_{k+j}' for j in range(5)]].mean(axis=1)
+            ma20_k = df_merge[[f'收盤價_{k+j}' for j in range(20)]].mean(axis=1)
+            ma60_k = df_merge[[f'收盤價_{k+j}' for j in range(60)]].mean(axis=1)
+            bullish_ma = (c_k > ma5_k) & (ma5_k > ma20_k) & (ma20_k > ma60_k)
+            
+            close_60 = [f'收盤價_{k+j}' for j in range(1, 61)]
+            max_60 = df_merge[close_60].max(axis=1)
+            breakout_60 = (c_k > max_60) & (max_60 > 0)
+            
+            # 3. 動能：成交量放大至少 1.5 倍 (突破發動)
+            vol_surge = (v_k >= v_prev * 1.5) & (v_prev > 0) & (v_k >= 500)
+            
+            return is_strong_k(k) & whale & inst_fire & bullish_ma & breakout_60 & vol_surge
         except Exception:
             return pd.Series(False, index=df_merge.index)
 
@@ -1345,6 +1391,7 @@ def main():
     res37 = build_res(cond37_fn, ["最新漲幅(%)", "增量倍數"], [False, False], std_rename)
     res38 = build_res(cond38_fn, ["實體K漲幅(%)", "增量倍數"], [False, False], std_rename)
     res39 = build_res(cond39_fn, ["千張大戶比例(%)", "最新漲幅(%)", "增量倍數"], [False, False, False], std_rename)
+    res40 = build_res(cond40_fn, ["千張大戶比例(%)", "最新漲幅(%)", "增量倍數"], [False, False, False], std_rename)
     initial_res32 = build_res(cond32_fn, ["法人3日集中度(%)", "最新漲幅(%)"], [False, False], inst_rename)
     res33 = build_res(cond33_fn, ["千張大戶比例(%)", "最新漲幅(%)"], [False, False], std_rename)
     res34 = build_res(cond_new_high_pullback, ["最新漲幅(%)", "增量倍數"], [False, False], std_rename)
@@ -1362,7 +1409,7 @@ def main():
         ("25.穩健法人鎖碼", cond25_fn), ("32.大戶鎖碼法人集中", cond32_backtest_fn), ("33.絕對鎖碼突破", cond33_fn),
         ("34.創新高回檔再攻", cond_new_high_pullback), ("35.飆股主升段基因", cond_super_bull_strategy),
         ("36.跳空強勢整理不賣", cond_gap_and_hold), ("37.資訊服務成長突破", cond37_fn), ("38.低價量暴增動能", cond38_fn),
-        ("39.極致大戶跳空量增", cond39_fn)
+        ("39.極致大戶跳空量增", cond39_fn), ("40.飆股初升段點火", cond40_fn)
     ]
 
     sept_indices = [i for i, (d, _) in enumerate(days_data) if "20260901" <= d <= "20260930"]
@@ -1476,7 +1523,7 @@ def main():
         ("20.外資越買越多出量", res20), ("22.高勝率基因複合", res22), ("23.突破10日最大量", res23),
         ("25.穩健法人鎖碼", res25), ("32.大戶鎖碼法人集中", initial_res32), ("33.絕對鎖碼突破", res33),
         ("34.創新高回檔再攻", res34), ("35.飆股主升段基因", res35), ("36.跳空強勢整理不賣", res36),
-        ("37.資訊服務成長突破", res37), ("38.低價量暴增動能", res38), ("39.極致大戶跳空量增", res39)
+        ("37.資訊服務成長突破", res37), ("38.低價量暴增動能", res38), ("39.極致大戶跳空量增", res39), ("40.飆股初升段點火", res40)
     ]
     hit_counts, hit_names = {}, {}
     for s_name, res_df in st_lists:
@@ -1532,6 +1579,7 @@ def main():
     html_tb37 = get_html_tb(res37)
     html_tb38 = get_html_tb(res38)
     html_tb39 = get_html_tb(res39)
+    html_tb40 = get_html_tb(res40)
 
     strategies_meta = [
         ("Tab_Strat12", "core", "🌟 綜合排行", "統計所有選股策略下，累計入選次數最多且大戶>=30%之最強勢標的。", len(res12), html_tb12),
@@ -1543,6 +1591,7 @@ def main():
         ("Tab_Strat37", "core", "💻 資訊服務成長突破 (智聯服務風格)", "【成長突破】創近20日新高 ＋ 成交量>=400張且大於5日均量1.2倍 ＋ 外資投信無賣壓。", len(res37), html_tb37),
         ("Tab_Strat38", "core", "⚡ 低價量暴增動能 (律勝風格)", "【短線爆發】成交量暴增達前一日2.2倍以上（量>=300張） ＋ 實體紅K漲幅>=3%。", len(res38), html_tb38),
         ("Tab_Strat25", "core", "🛡 穩健法人鎖碼 (宏正風格)", "【價值法人】多頭排列（5>20>60MA） ＋ 千張大戶>=45% ＋ 外資投信近7日累計買超。", len(res25), html_tb25),
+        ("Tab_Strat40", "breakout", "🚀 飆股初升段點火基因", "【主升段發動】大戶>=50% ＋ 法人點火買超 ＋ 創60日新高 ＋ 量增1.5倍的強勢紅K。", len(res40), html_tb40),
         ("Tab_Strat17", "breakout", "🏆 創 120 日半年新高", "【創高突破】最新收盤突破過去 120 日最高收盤價且紅K無長上影線。", len(res17), html_tb17),
         ("Tab_Strat4", "breakout", "🏆 創 20 日新高＋投信不賣", "【創高突破】收盤創 20 日新高 ＋ 近 7 天投信無賣超 ＋ 當日量增紅K。", len(res4), html_tb4),
         ("Tab_Strat6", "breakout", "🏆 創 5 日高＋跳空量增", "【短線爆發】創 5 日新高 ＋ 向上跳空不補 ＋ 成交量放大 ＋ 法人連 3 日不賣。", len(res6), html_tb6),
@@ -1743,7 +1792,7 @@ def main():
         {warning_html}
         <div id="Dashboard" class="page-view">
             <div class="cat-bar">
-                <button class="cat-pill active" onclick="filterCategory('all', this)">全部策略 (27)</button>
+                <button class="cat-pill active" onclick="filterCategory('all', this)">全部策略 (28)</button>
                 <button class="cat-pill" onclick="filterCategory('core', this)">🔥 核心首選</button>
                 <button class="cat-pill" onclick="filterCategory('breakout', this)">🏆 創高突破</button>
                 <button class="cat-pill" onclick="filterCategory('chip', this)">👑 籌碼鎖碼</button>
@@ -2052,7 +2101,7 @@ def main():
 
     custom_watch_list = ["6277", "6751", "3354", "5508", "5483", "1321", "5465", "1334", "3631", "8171", "5426", "4577", "6525", "1319", "6122", "2006", "6605"]
     watch_codes = set(custom_watch_list)
-    strat_dfs = [res2, res17, res22, res25, res35, res36, res37, res38, res39]
+    strat_dfs = [res2, res17, res22, res25, res35, res36, res37, res38, res39, res40]
     for s_df in strat_dfs:
         if isinstance(s_df, pd.DataFrame) and not s_df.empty and '股票代號' in s_df.columns:
             watch_codes.update(s_df['股票代號'].astype(str).str.strip().tolist())

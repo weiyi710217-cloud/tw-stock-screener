@@ -971,7 +971,7 @@ def main():
             return is_strong_k(k) & whale_80 & vol_surge & inst_safe & higher_highs
         except: return pd.Series(False, index=df_merge.index)
 
-    # 🆕 策略 42：千張大戶 > 80% ＋ 收盤創過去60天收盤新高(不含當日) ＋ 量增前一日 1.3 倍
+    # 🆕 策略 42：千張大戶 > 70% ＋ 收盤創過去60天收盤新高(不含當日) ＋ 量增前一日 1.3 倍
     def cond42_fn(k):
         try:
             c_k = df_merge[f'收盤價_{k}']
@@ -979,7 +979,7 @@ def main():
             if len(close_60) < 60: return pd.Series(False, index=df_merge.index)
             max_60 = df_merge[close_60].max(axis=1)
             breakout_60 = (c_k > max_60) & (max_60 > 0)
-            whale_80 = df_merge['千張大戶比例(%)'] > 80.0
+            whale_80 = df_merge['千張大戶比例(%)'] > 70.0
             v_k, v_prev = df_merge[f'成交量_{k}'], df_merge[f'成交量_{k+1}']
             vol_up = (v_k >= v_prev * 1.3) & (v_prev > 0)
             return whale_80 & breakout_60 & vol_up

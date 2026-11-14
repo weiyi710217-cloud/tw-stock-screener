@@ -268,7 +268,7 @@ def intraday_check_strategy(res_df, date_0):
                 }
 
                 # 若該股同時是「策略42」選出的標的，在訊息中加上標記
-                s42_tag = "\n• 🏷 來源: 策略42 大戶(>80%)創60日新高量增" if str(row.get('來源策略42', '')) in ("1", "True", "true") else ""
+                s42_tag = "\n• 🏷 來源: 策略42 大戶(>70%)創60日新高量增" if str(row.get('來源策略42', '')) in ("1", "True", "true") else ""
 
                 for s_id in triggered_list:
                     if s_id == 3 and 1 in triggered_list: continue
@@ -929,13 +929,13 @@ def main():
 
     def cond39_fn(k):
         try:
-            whale_80 = df_merge['千張大戶比例(%)'] >= 80.0
+            whale_70 = df_merge['千張大戶比例(%)'] >= 70.0
             v_k, v_prev = df_merge[f'成交量_{k}'], df_merge[f'成交量_{k+1}']
             vol_up = (v_k >= v_prev * 1.3) & (v_prev > 0) & (v_k >= 200)
             l_k, l_prev = df_merge[f'最低價_{k}'], df_merge[f'最低價_{k+1}']
             h_k, h_prev = df_merge[f'最高價_{k}'], df_merge[f'最高價_{k+1}']
             higher_high_low = (l_k > l_prev) & (h_k > h_prev) & (h_prev > 0)
-            return is_strong_k(k) & whale_80 & vol_up & higher_high_low
+            return is_strong_k(k) & whale_70 & vol_up & higher_high_low
         except: return pd.Series(False, index=df_merge.index)
 
     def cond40_fn(k):
@@ -961,14 +961,14 @@ def main():
             mv120_k = df_merge[vol_120].mean(axis=1)
             v_k, v_prev = df_merge[f'成交量_{k}'], df_merge[f'成交量_{k+1}']
             vol_surge = (v_k >= mv120_k * 2) & (v_prev >= mv120_k * 2) & (mv120_k > 0)
-            whale_80 = df_merge['千張大戶比例(%)'] >= 80.0
+            whale_70 = df_merge['千張大戶比例(%)'] >= 70.0
             f_k, t_k = df_merge[f'外資_{k}'], df_merge[f'投信_{k}']
             f_prev, t_prev = df_merge[f'外資_{k+1}'], df_merge[f'投信_{k+1}']
             inst_safe = (f_k >= 0) & (t_k >= 0) & (f_prev >= 0) & (t_prev >= 0)
             h_k, h_prev = df_merge[f'最高價_{k}'], df_merge[f'最高價_{k+1}']
             h_prev2 = df_merge[f'最高價_{k+2}'] if f'最高價_{k+2}' in df_merge.columns else h_prev
             higher_highs = (h_k > h_prev) & (h_prev > h_prev2)
-            return is_strong_k(k) & whale_80 & vol_surge & inst_safe & higher_highs
+            return is_strong_k(k) & whale_70 & vol_surge & inst_safe & higher_highs
         except: return pd.Series(False, index=df_merge.index)
 
     # 🆕 策略 42：千張大戶 > 70% ＋ 收盤創過去60天收盤新高(不含當日) ＋ 量增前一日 1.3 倍
@@ -979,10 +979,10 @@ def main():
             if len(close_60) < 60: return pd.Series(False, index=df_merge.index)
             max_60 = df_merge[close_60].max(axis=1)
             breakout_60 = (c_k > max_60) & (max_60 > 0)
-            whale_80 = df_merge['千張大戶比例(%)'] > 70.0
+            whale_70 = df_merge['千張大戶比例(%)'] > 70.0
             v_k, v_prev = df_merge[f'成交量_{k}'], df_merge[f'成交量_{k+1}']
             vol_up = (v_k >= v_prev * 1.3) & (v_prev > 0)
-            return whale_80 & breakout_60 & vol_up
+            return whale_70 & breakout_60 & vol_up
         except: return pd.Series(False, index=df_merge.index)
 
     def build_res(cond_fn, sort_cols, asc_list, rename_dict=None):
@@ -1184,10 +1184,10 @@ def main():
         ("Tab_Strat15", "breakout", "🏆 60日區間壓縮突破", "【極致壓縮】突破60日高 ＋ 區間震幅<=10% ＋ 成交量放大1.2倍 ＋ 創60日最大量。", len(res15), html_tbs[15]),
         ("Tab_Strat38", "breakout", "⚡ 底部暴量動能起漲", "【短線爆發】成交量暴增達前一日2.2倍以上（總量>=300張） ＋ 實體紅K漲幅>=3%。", len(res38), html_tbs[38]),
         
-        ("Tab_Strat42", "chip", "👑 大戶(>80%)創60日新高量增", "【鎖碼突破】千張大戶 > 80% ＋ 收盤創過去60天收盤新高 ＋ 成交量達前一日1.3倍以上。（入選標的自動加入盤中即時監控）", len(res42), html_tbs[42]),
-        ("Tab_Strat41", "chip", "👑 極致大戶連滾量 (大戶>80%)", "【主力連續重擊】千張大戶 >= 80% ＋ 連兩日成交量達半年均量2倍以上 ＋ 法人連兩日無賣超 ＋ 高點連續墊高。", len(res41), html_tbs[41]),
+        ("Tab_Strat42", "chip", "👑 大戶(>70%)創60日新高量增", "【鎖碼突破】千張大戶 > 70% ＋ 收盤創過去60天收盤新高 ＋ 成交量達前一日1.3倍以上。（入選標的自動加入盤中即時監控）", len(res42), html_tbs[42]),
+        ("Tab_Strat41", "chip", "👑 極致大戶連滾量 (大戶>70%)", "【主力連續重擊】千張大戶 >= 70% ＋ 連兩日成交量達半年均量2倍以上 ＋ 法人連兩日無賣超 ＋ 高點連續墊高。", len(res41), html_tbs[41]),
         ("Tab_Strat35", "chip", "🛡 主升段均線多頭發散", "【價值爆發】千張大戶 >= 50% ＋ 5>20>60MA絕對多頭 ＋ 量增1.15倍 ＋ 法人進場。", len(res35), html_tbs[35]),
-        ("Tab_Strat39", "chip", "👑 極致大戶(>80%)強勢創高", "【絕對鎖碼】千張大戶 >= 80% ＋ 成交量放大1.3倍 ＋ 當日低點大於昨低、高點大於昨高。", len(res39), html_tbs[39]),
+        ("Tab_Strat39", "chip", "👑 極致大戶(>70%)強勢創高", "【絕對鎖碼】千張大戶 >= 70% ＋ 成交量放大1.3倍 ＋ 當日低點大於昨低、高點大於昨高。", len(res39), html_tbs[39]),
         ("Tab_Strat32", "chip", "👑 大戶鎖碼＋法人極度集中", "【籌碼高度集中】千張大戶 >= 60% ＋ 近 3 日外資投信買超佔成交總量 >= 20%。", len(res32), html_tbs[32]),
         
         ("Tab_Strat34", "chip", "🚀 創新高回檔洗盤再攻", "【洗盤再上】過去20天曾創半年新高 ＋ 回檔洗盤後重新強勢逼近前高 5% 攻擊區。", len(res34), html_tbs[34]),

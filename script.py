@@ -267,6 +267,9 @@ def intraday_check_strategy(res_df, date_0):
                     5: ("策略五：5分K連續雙跳空", f"突破5日高且 5分K 連兩根跳空強攻！")
                 }
 
+                # 若該股同時是「策略42」選出的標的，在訊息中加上標記
+                s42_tag = "\n• 🏷 來源: 策略42 大戶(>80%)創60日新高量增" if str(row.get('來源策略42', '')) in ("1", "True", "true") else ""
+
                 for s_id in triggered_list:
                     if s_id == 3 and 1 in triggered_list: continue
                     if s_id == 4 and 2 in triggered_list: continue
@@ -279,7 +282,8 @@ def intraday_check_strategy(res_df, date_0):
                         f"• 股票: {name} ({code})\n"
                         f"• 漲跌幅: `{sign}{pct_s:.2f}%` (現價: `{c0_s:.2f}` / 均價: `{vwap_s:.2f}`)\n"
                         f"• 狀態: {status_str}\n"
-                        f"• 5分K量: `{effective_vol:.0f}張`\n"
+                        f"• 5分K量: `{effective_vol:.0f}張`"
+                        f"{s42_tag}\n"
                         f"🔗 [Yahoo 技術線圖]({yh_link})"
                     )
                     print(msg, flush=True)
@@ -792,7 +796,7 @@ def main():
         return red_k & liq & ((upper_shadow <= 0.025) | (close_pos >= 0.65))
 
     # ==========================
-    # 精簡化後的 12 大核心策略函式
+    # 精簡化後的 13 大核心策略函式
     # ==========================
     def cond15_fn(k):
         c_k = df_merge[f'收盤價_{k}']
@@ -967,6 +971,20 @@ def main():
             return is_strong_k(k) & whale_80 & vol_surge & inst_safe & higher_highs
         except: return pd.Series(False, index=df_merge.index)
 
+    # 🆕 策略 42：千張大戶 > 80% ＋ 收盤創過去60天收盤新高(不含當日) ＋ 量增前一日 1.3 倍
+    def cond42_fn(k):
+        try:
+            c_k = df_merge[f'收盤價_{k}']
+            close_60 = [f'收盤價_{k+j}' for j in range(1, 61) if f'收盤價_{k+j}' in df_merge.columns]
+            if len(close_60) < 60: return pd.Series(False, index=df_merge.index)
+            max_60 = df_merge[close_60].max(axis=1)
+            breakout_60 = (c_k > max_60) & (max_60 > 0)
+            whale_80 = df_merge['千張大戶比例(%)'] > 80.0
+            v_k, v_prev = df_merge[f'成交量_{k}'], df_merge[f'成交量_{k+1}']
+            vol_up = (v_k >= v_prev * 1.3) & (v_prev > 0)
+            return whale_80 & breakout_60 & vol_up
+        except: return pd.Series(False, index=df_merge.index)
+
     def build_res(cond_fn, sort_cols, asc_list, rename_dict=None):
         cond = cond_fn(0)
         res = df_merge[cond].copy()
@@ -993,6 +1011,7 @@ def main():
     res39 = build_res(cond39_fn, ["千張大戶比例(%)", "最新漲幅(%)", "增量倍數"], [False, False, False], std_rename)
     res40 = build_res(cond40_fn, ["千張大戶比例(%)", "最新漲幅(%)", "增量倍數"], [False, False, False], std_rename)
     res41 = build_res(cond41_fn, ["千張大戶比例(%)", "最新漲幅(%)", "增量倍數"], [False, False, False], std_rename)
+    res42 = build_res(cond42_fn, ["千張大戶比例(%)", "最新漲幅(%)", "增量倍數"], [False, False, False], std_rename)
 
     print("🔬 正在執行策略組合與回測計算...")
     cand_strategies = [
@@ -1001,7 +1020,8 @@ def main():
         ("34.創新高回檔再攻", cond34_fn), ("35.主升段均線發散", cond35_fn),
         ("36.跳空缺口不破", cond36_fn), ("37.創20日新高鎖碼", cond37_fn),
         ("38.暴量起漲動能", cond38_fn), ("39.極致大戶強勢", cond39_fn),
-        ("40.飆股初升段點火", cond40_fn), ("41.極致大戶連滾量", cond41_fn)
+        ("40.飆股初升段點火", cond40_fn), ("41.極致大戶連滾量", cond41_fn),
+        ("42.大戶創60日新高量增", cond42_fn)
     ]
 
     sept_indices = [i for i, (d, _) in enumerate(days_data) if "20260901" <= d <= "20260930"]
@@ -1115,7 +1135,8 @@ def main():
         ("38.暴量起漲動能", res38),
         ("39.極致大戶強勢", res39),
         ("40.飆股初升段點火", res40),
-        ("41.極致大戶連滾量", res41)
+        ("41.極致大戶連滾量", res41),
+        ("42.大戶創60日新高量增", res42)
     ]
 
     hit_counts, hit_names = {}, {}
@@ -1147,7 +1168,8 @@ def main():
         15: get_html_tb(res15), 16: get_html_tb(res16), 22: get_html_tb(res22),
         32: get_html_tb(res32), 34: get_html_tb(res34), 35: get_html_tb(res35),
         36: get_html_tb(res36), 37: get_html_tb(res37), 38: get_html_tb(res38),
-        39: get_html_tb(res39), 40: get_html_tb(res40), 41: get_html_tb(res41)
+        39: get_html_tb(res39), 40: get_html_tb(res40), 41: get_html_tb(res41),
+        42: get_html_tb(res42)
     }
 
     strategies_meta = [
@@ -1162,6 +1184,7 @@ def main():
         ("Tab_Strat15", "breakout", "🏆 60日區間壓縮突破", "【極致壓縮】突破60日高 ＋ 區間震幅<=10% ＋ 成交量放大1.2倍 ＋ 創60日最大量。", len(res15), html_tbs[15]),
         ("Tab_Strat38", "breakout", "⚡ 底部暴量動能起漲", "【短線爆發】成交量暴增達前一日2.2倍以上（總量>=300張） ＋ 實體紅K漲幅>=3%。", len(res38), html_tbs[38]),
         
+        ("Tab_Strat42", "chip", "👑 大戶(>80%)創60日新高量增", "【鎖碼突破】千張大戶 > 80% ＋ 收盤創過去60天收盤新高 ＋ 成交量達前一日1.3倍以上。（入選標的自動加入盤中即時監控）", len(res42), html_tbs[42]),
         ("Tab_Strat41", "chip", "👑 極致大戶連滾量 (大戶>80%)", "【主力連續重擊】千張大戶 >= 80% ＋ 連兩日成交量達半年均量2倍以上 ＋ 法人連兩日無賣超 ＋ 高點連續墊高。", len(res41), html_tbs[41]),
         ("Tab_Strat35", "chip", "🛡 主升段均線多頭發散", "【價值爆發】千張大戶 >= 50% ＋ 5>20>60MA絕對多頭 ＋ 量增1.15倍 ＋ 法人進場。", len(res35), html_tbs[35]),
         ("Tab_Strat39", "chip", "👑 極致大戶(>80%)強勢創高", "【絕對鎖碼】千張大戶 >= 80% ＋ 成交量放大1.3倍 ＋ 當日低點大於昨低、高點大於昨高。", len(res39), html_tbs[39]),
@@ -1312,7 +1335,7 @@ def main():
         {warning_html}
         <div id="Dashboard" class="page-view">
             <div class="cat-bar">
-                <button class="cat-pill active" onclick="filterCategory('all', this)">菁英策略 (12)</button>
+                <button class="cat-pill active" onclick="filterCategory('all', this)">菁英策略 (13)</button>
                 <button class="cat-pill" onclick="filterCategory('core', this)">🔥 核心強勢</button>
                 <button class="cat-pill" onclick="filterCategory('breakout', this)">🏆 創高突破</button>
                 <button class="cat-pill" onclick="filterCategory('chip', this)">👑 籌碼型態</button>
@@ -1459,17 +1482,24 @@ def main():
     with open(os.path.abspath("index.html"), "w", encoding="utf-8") as f: f.write(html_content)
     print("\n✅ 網頁已生成: index.html")
 
+    # ==========================================
+    # 盤中即時觀察清單：原有固定名單 + 所有策略(含策略42)當日選出的股票
+    # ==========================================
     custom_watch = {"6277", "6751", "3354", "5508", "5483", "1321", "5465", "1334", "3631", "8171", "5426", "4577", "6525", "1319", "6122", "2006", "6605"}
-    for df_ in [res15, res16, res22, res32, res34, res35, res36, res37, res38, res39, res40, res41]:
+    for df_ in [res15, res16, res22, res32, res34, res35, res36, res37, res38, res39, res40, res41, res42]:
         if not df_.empty and '股票代號' in df_.columns: custom_watch.update(df_['股票代號'].astype(str).str.strip().tolist())
+
+    # 策略42 選出的股票代號（盤中訊息會標示來源）
+    strat42_codes = set(res42['股票代號'].astype(str).str.strip().tolist()) if not res42.empty and '股票代號' in res42.columns else set()
 
     if custom_watch and not df_merge.empty:
         target_df = df_merge[df_merge['股票代號'].isin(custom_watch)][['股票代號', '股票名稱', '市場', '收盤價_0', '收盤價_1', '5日最高收盤']].drop_duplicates('股票代號').reset_index(drop=True)
+        target_df['來源策略42'] = target_df['股票代號'].astype(str).isin(strat42_codes).astype(int)
         watch_path = os.path.join(CACHE_DIR, "intraday_watchlist.json")
         if not target_df.empty:
             with open(watch_path, "w", encoding="utf-8") as f:
                 json.dump({"base_date": str(date_0), "updated_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "stocks": target_df.to_dict("records")}, f, ensure_ascii=False, indent=2)
-            print(f"📌 已匯出 {len(target_df)} 檔至: {watch_path}")
+            print(f"📌 已匯出 {len(target_df)} 檔至: {watch_path}（其中策略42選出 {len(strat42_codes)} 檔）")
 
     if os.environ.get("GITHUB_ACTIONS") != "true": webbrowser.open(f"file:///{os.path.abspath('index.html')}")
 
